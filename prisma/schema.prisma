@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ClassFormat {
+  IN_PERSON
+  ONLINE
+  HYBRID
+}
+
+enum ClassTopic {
+  BEGINNER
+  TOOLING
+  CARVING
+  DYEING
+  SADDLERY
+  WALLETS
+  BAGS
+  BELTS
+  FIGURE_CARVING
+  BUSINESSES
+  ASSEMBLY
+  COSTUMING
+}
+
+model SubmissionBatch {
+  id              String            @id @default(cuid())
+  submittedByName String
+  submittedByEmail String
+  status          SubmissionStatus  @default(PENDING)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  classes         ClassSubmission[]
+}
+
+model ClassSubmission {
+  id               String           @id @default(cuid())
+  submittedByName  String
+  submittedByEmail String
+
+  classTitle       String
+  classUrl         String?
+  description      String?
+
+  cost             String
+  format           ClassFormat
+  locationCity     String
+  locationState    String
+  startDate        DateTime
+  topic            ClassTopic
+
+  status           SubmissionStatus @default(PENDING)
+
+  batchId          String?
+  batch            SubmissionBatch? @relation(fields: [batchId], references: [id])
+
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([status])
+  @@index([batchId])
+}
