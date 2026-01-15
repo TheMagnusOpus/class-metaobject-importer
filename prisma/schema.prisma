@@ -34,15 +34,45 @@ enum ClassTopic {
   COSTUMING
 }
 
-model SubmissionBatch {
-  id              String            @id @default(cuid())
-  submittedByName String
-  submittedByEmail String
-  status          SubmissionStatus  @default(PENDING)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+/**
+ * Required by @shopify/shopify-app-session-storage-prisma
+ * This table stores Shopify OAuth sessions (online + offline).
+ */
+model Session {
+  id            String   @id
+  shop          String
+  state         String
+  isOnline      Boolean  @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
 
-  classes         ClassSubmission[]
+  // Newer token-exchange / expiring offline token flow fields
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  // Online session user fields (nullable for offline sessions)
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean  @default(false)
+  locale        String?
+  collaborator  Boolean  @default(false)
+  emailVerified Boolean  @default(false)
+
+  @@index([shop])
+}
+
+model SubmissionBatch {
+  id               String           @id @default(cuid())
+  submittedByName  String
+  submittedByEmail String
+  status           SubmissionStatus @default(PENDING)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  classes          ClassSubmission[]
 }
 
 model ClassSubmission {
