@@ -15,19 +15,35 @@ query ListClasses($first: Int!) {
     nodes {
       id
       handle
+      status
       fields { key value }
     }
   }
 }
 `;
 
-const APPROVE = `#graphql
-mutation Approve($id: ID!) {
+const APPROVE_AND_PUBLISH = `#graphql
+mutation ApproveAndPublish($id: ID!) {
   metaobjectUpdate(
     id: $id,
-    metaobject: { fields: [{ key: "status", value: "Approved" }] }
+    metaobject: {
+      status: ACTIVE
+      fields: [{ key: "status", value: "Approved" }]
+    }
   ) {
-    metaobject { id handle }
+    metaobject { id handle status }
+    userErrors { field message }
+  }
+}
+`;
+
+const PUBLISH_ONLY = `#graphql
+mutation PublishOnly($id: ID!) {
+  metaobjectUpdate(
+    id: $id,
+    metaobject: { status: ACTIVE }
+  ) {
+    metaobject { id handle status }
     userErrors { field message }
   }
 }
@@ -112,6 +128,9 @@ function cardDetails(m) {
   const submittedByName = getField(m.fields, "submitted_by_name");
   const submittedByEmail = getField(m.fields, "submitted_by_email");
 
+  const workflowStatus = getField(m.fields, "status");
+  const publishStatus = (m.status || "").toString();
+
   return {
     title,
     instructor,
@@ -122,6 +141,8 @@ function cardDetails(m) {
     description,
     submittedByName,
     submittedByEmail,
+    workflowStatus,
+    publishStatus,
   };
 }
 
@@ -147,11 +168,19 @@ export const loader = async ({ request }) => {
   const json = await resp.json();
   const nodes = json?.data?.metaobjects?.nodes || [];
 
-  const pending = nodes.filter(
-    (m) => getField(m.fields, "status").toLowerCase() === "pending",
-  );
+  const pending = nodes.filter((m) => {
+    const s = (getField(m.fields, "status") || "").toLowerCase();
+    return s === "pending";
+  });
 
-  return { pending, shop: ctx.shop, host: ctx.host };
+  // These are the ones you already "Approved" but are still not published
+  const approvedDrafts = nodes.filter((m) => {
+    const s = (getField(m.fields, "status") || "").toLowerCase();
+    const pub = (m.status || "").toString().toUpperCase();
+    return s === "approved" && pub !== "ACTIVE";
+  });
+
+  return { pending, approvedDrafts, shop: ctx.shop, host: ctx.host };
 };
 
 export const action = async ({ request }) => {
@@ -179,24 +208,40 @@ export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(authRequest);
 
   const fd = await request.formData();
-  const raw = fd.get("id");
-  const id = typeof raw === "string" ? raw : "";
+  const rawId = fd.get("id");
+  const rawIntent = fd.get("intent");
+
+  const id = typeof rawId === "string" ? rawId : "";
+  const intent = typeof rawIntent === "string" ? rawIntent : "approve";
 
   if (!id) return { ok: false, error: "Missing id." };
 
-  const resp = await admin.graphql(APPROVE, { variables: { id } });
+  const mutation =
+    intent === "publish" ? PUBLISH_ONLY : APPROVE_AND_PUBLISH;
+
+  const resp = await admin.graphql(mutation, { variables: { id } });
   const json = await resp.json();
-  const userErrors = json?.data?.metaobjectUpdate?.userErrors || [];
+
+  const userErrors =
+    json?.data?.metaobjectUpdate?.userErrors ||
+    json?.data?.metaobjectUpdate?.userErrors ||
+    [];
 
   if (userErrors.length) {
     return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
   }
 
-  return { ok: true };
+  return {
+    ok: true,
+    message:
+      intent === "publish"
+        ? "Published."
+        : "Approved and published.",
+  };
 };
 
 export default function ReviewClasses() {
-  const { pending, shop, host } = useLoaderData();
+  const { pending, approvedDrafts, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
   const fetcher = useFetcher();
@@ -216,8 +261,8 @@ export default function ReviewClasses() {
       ) : null}
 
       {actionData?.ok ? (
-        <s-section heading="Approved">
-          <s-paragraph>Submission approved.</s-paragraph>
+        <s-section heading="Success">
+          <s-paragraph>{actionData.message || "Done."}</s-paragraph>
         </s-section>
       ) : null}
 
@@ -228,8 +273,8 @@ export default function ReviewClasses() {
       ) : null}
 
       {fetcher.data?.ok ? (
-        <s-section heading="Approved">
-          <s-paragraph>Submission approved.</s-paragraph>
+        <s-section heading="Success">
+          <s-paragraph>{fetcher.data.message || "Done."}</s-paragraph>
         </s-section>
       ) : null}
 
@@ -249,11 +294,22 @@ export default function ReviewClasses() {
                 description,
                 submittedByName,
                 submittedByEmail,
+                workflowStatus,
+                publishStatus,
               } = cardDetails(m);
 
               return (
                 <s-section key={m.id} heading={title}>
                   <s-paragraph>
+                    <s-text emphasis="bold">
+                      Workflow: {workflowStatus || "Unknown"}
+                    </s-text>
+                    <br />
+                    <s-text emphasis="bold">
+                      Publish status: {publishStatus || "Unknown"}
+                    </s-text>
+                    <br />
+
                     {!submittedByName && !submittedByEmail ? (
                       <>
                         <s-text emphasis="bold">
@@ -274,8 +330,7 @@ export default function ReviewClasses() {
 
                     {instructor ? (
                       <>
-                        Instructor:{" "}
-                        <s-text emphasis="bold">{instructor}</s-text>
+                        Instructor: <s-text emphasis="bold">{instructor}</s-text>
                         <br />
                       </>
                     ) : null}
@@ -317,6 +372,7 @@ export default function ReviewClasses() {
 
                   <fetcher.Form method="post" action={actionUrl}>
                     <input type="hidden" name="id" value={m.id} />
+                    <input type="hidden" name="intent" value="approve" />
 
                     {/* Kept for safety / future use (not required for auth now) */}
                     <input type="hidden" name="shop" value={shop || ""} />
@@ -327,7 +383,115 @@ export default function ReviewClasses() {
                       variant="primary"
                       {...(busy ? { loading: true } : {})}
                     >
-                      Approve
+                      Approve and publish
+                    </s-button>
+                  </fetcher.Form>
+                </s-section>
+              );
+            })}
+          </s-stack>
+        )}
+      </s-section>
+
+      <s-section heading={`Approved but not published (${approvedDrafts.length})`}>
+        {approvedDrafts.length === 0 ? (
+          <s-paragraph>No approved drafts found.</s-paragraph>
+        ) : (
+          <s-stack direction="block" gap="base">
+            {approvedDrafts.map((m) => {
+              const {
+                title,
+                instructor,
+                start,
+                format,
+                cost,
+                location,
+                description,
+                submittedByName,
+                submittedByEmail,
+                workflowStatus,
+                publishStatus,
+              } = cardDetails(m);
+
+              return (
+                <s-section key={m.id} heading={title}>
+                  <s-paragraph>
+                    <s-text emphasis="bold">
+                      Workflow: {workflowStatus || "Unknown"}
+                    </s-text>
+                    <br />
+                    <s-text emphasis="bold">
+                      Publish status: {publishStatus || "Unknown"}
+                    </s-text>
+                    <br />
+
+                    {submittedByName || submittedByEmail ? (
+                      <>
+                        Submitted by:{" "}
+                        <s-text emphasis="bold">
+                          {submittedByName || "Unknown"}
+                          {submittedByEmail ? ` (${submittedByEmail})` : ""}
+                        </s-text>
+                        <br />
+                      </>
+                    ) : null}
+
+                    {instructor ? (
+                      <>
+                        Instructor: <s-text emphasis="bold">{instructor}</s-text>
+                        <br />
+                      </>
+                    ) : null}
+
+                    {location ? (
+                      <>
+                        Location: <s-text emphasis="bold">{location}</s-text>
+                        <br />
+                      </>
+                    ) : null}
+
+                    {start ? (
+                      <>
+                        Date: <s-text emphasis="bold">{start}</s-text>
+                        <br />
+                      </>
+                    ) : null}
+
+                    {format ? (
+                      <>
+                        Format: <s-text emphasis="bold">{format}</s-text>
+                        <br />
+                      </>
+                    ) : null}
+
+                    {cost ? (
+                      <>
+                        Cost: <s-text emphasis="bold">{cost}</s-text>
+                        <br />
+                      </>
+                    ) : null}
+
+                    {description ? (
+                      <>
+                        Description: <s-text>{description}</s-text>
+                      </>
+                    ) : null}
+                  </s-paragraph>
+
+                  <fetcher.Form method="post" action={actionUrl}>
+                    <input type="hidden" name="id" value={m.id} />
+                    <input type="hidden" name="intent" value="publish" />
+
+                    {/* Kept for safety / future use (not required for auth now) */}
+                    <input type="hidden" name="shop" value={shop || ""} />
+                    <input type="hidden" name="host" value={host || ""} />
+
+                    <s-button
+                      type="submit"
+                      variant="primary"
+                      {...(busy ? { loading: true } : {})}
+                    >
+                      Publish
                     </s-button>
                   </fetcher.Form>
                 </s-section>
