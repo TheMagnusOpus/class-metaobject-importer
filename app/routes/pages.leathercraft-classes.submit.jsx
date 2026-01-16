@@ -1,143 +1,275 @@
-import { useState } from "react-router";
+import { useState } from "react";
 
 export default function PublicClassSubmit() {
-  const [singleResult, setSingleResult] = useState(null);
-  const [bulkResult, setBulkResult] = useState(null);
+  const [submittedByName, setSubmittedByName] = useState("");
+  const [submittedByEmail, setSubmittedByEmail] = useState("");
 
-  async function submitSingle(e) {
+  const [classTitle, setClassTitle] = useState("");
+  const [classDescription, setClassDescription] = useState("");
+  const [instructorName, setInstructorName] = useState("");
+  const [format, setFormat] = useState("In-Person");
+
+  const [locationCity, setLocationCity] = useState("");
+  const [locationState, setLocationState] = useState("");
+
+  const [startDate, setStartDate] = useState("");
+  const [cost, setCost] = useState("");
+  const [registrationUrl, setRegistrationUrl] = useState("");
+  const [topics, setTopics] = useState("");
+
+  const [status, setStatus] = useState("idle"); // idle | submitting | success | error
+  const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+
+  async function handleSubmit(e) {
     e.preventDefault();
-    setSingleResult(null);
+    setStatus("submitting");
+    setError("");
+    setSuccessMsg("");
 
-    const fd = new FormData(e.currentTarget);
+    try {
+      const payload = {
+        submitted_by_name: submittedByName.trim(),
+        submitted_by_email: submittedByEmail.trim(),
+        class_title: classTitle.trim(),
+        class_description: classDescription.trim(),
+        instructor_name: instructorName.trim(),
+        format: format.trim(),
+        location_city: locationCity.trim(),
+        location_state: locationState.trim(),
+        start_date: startDate.trim(),
+        cost: cost.trim(),
+        registration_url: registrationUrl.trim(),
+        topics: topics.trim(),
+      };
 
-    const resp = await fetch("/api/class-submissions/single", { method: "POST", body: fd });
-    const data = await resp.json().catch(() => ({}));
-    setSingleResult(data);
-  }
+      const resp = await fetch("/api/class-submissions/single", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-  async function submitBulk(e) {
-    e.preventDefault();
-    setBulkResult(null);
+      const json = await resp.json().catch(() => null);
 
-    const fd = new FormData(e.currentTarget);
+      if (!resp.ok || !json?.ok) {
+        const msg =
+          json?.error ||
+          json?.message ||
+          `Submission failed (HTTP ${resp.status}).`;
+        throw new Error(msg);
+      }
 
-    const resp = await fetch("/api/class-submissions/bulk", { method: "POST", body: fd });
-    const data = await resp.json().catch(() => ({}));
-    setBulkResult(data);
+      setStatus("success");
+      setSuccessMsg(
+        "Thanks. Your class has been submitted for review and should appear after approval."
+      );
+
+      // Clear form
+      setClassTitle("");
+      setClassDescription("");
+      setInstructorName("");
+      setFormat("In-Person");
+      setLocationCity("");
+      setLocationState("");
+      setStartDate("");
+      setCost("");
+      setRegistrationUrl("");
+      setTopics("");
+    } catch (err) {
+      setStatus("error");
+      setError(err?.message || "Something went wrong.");
+    }
   }
 
   return (
-    <s-page heading="Submit a leathercraft class">
-      <s-section heading="Before you submit">
-        <s-paragraph>
-          This is a community resource. Submissions are reviewed before they appear publicly.
-          Please include your name and email so we can follow up if something needs clarification.
-        </s-paragraph>
-      </s-section>
+    <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
+      <h1 style={{ fontSize: 28, marginBottom: 8 }}>Submit a Leathercraft Class</h1>
+      <p style={{ marginTop: 0, color: "#555" }}>
+        Share a class happening in your area. Submissions are reviewed before they appear publicly.
+      </p>
 
-      <s-section heading="Submit one class">
-        <form onSubmit={submitSingle}>
-          <s-stack direction="block" gap="base">
-            {/* Honeypot */}
-            <input type="text" name="website" tabIndex="-1" autoComplete="off" style={{ display: "none" }} />
+      {status === "success" ? (
+        <div
+          style={{
+            border: "1px solid #c7f0d8",
+            background: "#f3fffa",
+            padding: 14,
+            borderRadius: 8,
+            marginBottom: 16,
+          }}
+        >
+          {successMsg}
+        </div>
+      ) : null}
 
-            <s-text-field label="Your name" name="submitted_by_name" required />
-            <s-text-field label="Your email" name="submitted_by_email" type="email" required />
+      {status === "error" ? (
+        <div
+          style={{
+            border: "1px solid #ffd2d2",
+            background: "#fff5f5",
+            padding: 14,
+            borderRadius: 8,
+            marginBottom: 16,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
 
-            <s-text-field label="Class title" name="class_title" required />
-            <s-text-field label="Instructor name" name="instructor_name" />
+      <form onSubmit={handleSubmit}>
+        <fieldset style={{ border: "1px solid #eee", borderRadius: 8, padding: 16 }}>
+          <legend style={{ padding: "0 6px" }}>Submitted by</legend>
 
-            <s-text-field label="Date (YYYY-MM-DD or MM/DD/YYYY)" name="start_date" required />
+          <label style={{ display: "block", marginBottom: 6 }}>
+            Name (required)
+            <input
+              value={submittedByName}
+              onChange={(e) => setSubmittedByName(e.target.value)}
+              required
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            <s-text-field label="Format (In-Person, Online, Hybrid)" name="format" />
-            <s-text-field label="City" name="location_city" />
-            <s-text-field label="State / Region" name="location_state" />
+          <label style={{ display: "block" }}>
+            Email (required)
+            <input
+              value={submittedByEmail}
+              onChange={(e) => setSubmittedByEmail(e.target.value)}
+              required
+              type="email"
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
+        </fieldset>
 
-            <s-text-field label="Cost" name="cost" />
-            <s-text-field label="Registration URL" name="registration_url" />
-            <s-text-field label="Topics (comma separated)" name="topics" />
+        <div style={{ height: 12 }} />
 
-            <s-textarea label="Description" name="class_description" />
+        <fieldset style={{ border: "1px solid #eee", borderRadius: 8, padding: 16 }}>
+          <legend style={{ padding: "0 6px" }}>Class details</legend>
 
-            {/* Turnstile
-               You must include the Turnstile widget on the page and ensure it posts
-               cf-turnstile-response. How you embed depends on where this route is rendered.
-               If this is rendered inside your Shopify app runtime, add the script tag in your theme
-               or your app host page.
-            */}
-            <div>
-              <div className="cf-turnstile" data-sitekey="YOUR_TURNSTILE_SITE_KEY"></div>
-            </div>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Class title (required)
+            <input
+              value={classTitle}
+              onChange={(e) => setClassTitle(e.target.value)}
+              required
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            <s-button type="submit" variant="primary">Submit</s-button>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Description
+            <textarea
+              value={classDescription}
+              onChange={(e) => setClassDescription(e.target.value)}
+              rows={4}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            {singleResult?.ok ? (
-              <s-paragraph>
-                Submitted. Thanks. Your submission is pending review.
-              </s-paragraph>
-            ) : null}
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Instructor name
+            <input
+              value={instructorName}
+              onChange={(e) => setInstructorName(e.target.value)}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            {singleResult?.error ? (
-              <s-paragraph>
-                Submission failed: <s-text emphasis="bold">{singleResult.error}</s-text>
-              </s-paragraph>
-            ) : null}
-          </s-stack>
-        </form>
-      </s-section>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Format
+            <select
+              value={format}
+              onChange={(e) => setFormat(e.target.value)}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            >
+              <option>In-Person</option>
+              <option>Online</option>
+              <option>Hybrid</option>
+            </select>
+          </label>
 
-      <s-section heading="Bulk upload (CSV)">
-        <s-paragraph>
-          Upload a CSV to submit multiple classes at once. These will be marked Pending until approved.
-        </s-paragraph>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            City
+            <input
+              value={locationCity}
+              onChange={(e) => setLocationCity(e.target.value)}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-        <form onSubmit={submitBulk} encType="multipart/form-data">
-          <s-stack direction="block" gap="base">
-            {/* Honeypot */}
-            <input type="text" name="website" tabIndex="-1" autoComplete="off" style={{ display: "none" }} />
+          <label style={{ display: "block", marginBottom: 10 }}>
+            State / Region
+            <input
+              value={locationState}
+              onChange={(e) => setLocationState(e.target.value)}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            <s-text-field label="Your name" name="submitted_by_name" required />
-            <s-text-field label="Your email" name="submitted_by_email" type="email" required />
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Start date (required)
+            <input
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              required
+              placeholder="YYYY-MM-DD"
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            <input type="file" name="csv_file" accept=".csv,text/csv" required />
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Cost
+            <input
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            <div>
-              <div className="cf-turnstile" data-sitekey="0x4AAAAAACMYdI9hEcJm1J4w"></div>
-            </div>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Registration URL
+            <input
+              value={registrationUrl}
+              onChange={(e) => setRegistrationUrl(e.target.value)}
+              type="url"
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
 
-            <s-button type="submit" variant="primary">Upload CSV</s-button>
+          <label style={{ display: "block" }}>
+            Topics (comma-separated)
+            <input
+              value={topics}
+              onChange={(e) => setTopics(e.target.value)}
+              style={{ width: "100%", padding: 10, marginTop: 6 }}
+            />
+          </label>
+        </fieldset>
 
-            {bulkResult?.ok ? (
-              <s-paragraph>
-                Uploaded. Imported: <s-text emphasis="bold">{bulkResult.imported}</s-text>
-              </s-paragraph>
-            ) : null}
+        <div style={{ height: 12 }} />
 
-            {bulkResult?.errors?.length ? (
-              <s-section heading="Upload issues">
-                <s-unordered-list>
-                  {bulkResult.errors.slice(0, 20).map((err, idx) => (
-                    <s-list-item key={idx}>{err}</s-list-item>
-                  ))}
-                </s-unordered-list>
-              </s-section>
-            ) : null}
+        <button
+          type="submit"
+          disabled={status === "submitting"}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 8,
+            border: "1px solid #111",
+            background: status === "submitting" ? "#eee" : "#111",
+            color: status === "submitting" ? "#555" : "#fff",
+            cursor: status === "submitting" ? "not-allowed" : "pointer",
+            width: "100%",
+            fontSize: 16,
+          }}
+        >
+          {status === "submitting" ? "Submitting…" : "Submit for review"}
+        </button>
+      </form>
 
-            {bulkResult?.error ? (
-              <s-paragraph>
-                Upload failed: <s-text emphasis="bold">{bulkResult.error}</s-text>
-              </s-paragraph>
-            ) : null}
-          </s-stack>
-        </form>
-
-        <s-section slot="aside" heading="CSV headers">
-          <s-paragraph>
-            external_id, class_title, class_description, instructor_name, format, location_city,
-            location_state, start_date, cost, registration_url, topics
-          </s-paragraph>
-        </s-section>
-      </s-section>
-    </s-page>
+      <p style={{ marginTop: 12, color: "#777", fontSize: 13 }}>
+        Note: Submissions are reviewed to prevent spam and duplicates.
+      </p>
+    </div>
   );
 }
