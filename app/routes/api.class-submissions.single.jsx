@@ -1,3 +1,5 @@
+export const config = { runtime: "server" };
+
 // app/routes/api.class-submissions.single.jsx
 import { PrismaClient } from "@prisma/client";
 
