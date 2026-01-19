@@ -15,7 +15,6 @@ query ListClasses($first: Int!) {
     nodes {
       id
       handle
-      status
       fields { key value }
     }
   }
@@ -129,7 +128,7 @@ function cardDetails(m) {
   const submittedByEmail = getField(m.fields, "submitted_by_email");
 
   const workflowStatus = getField(m.fields, "status");
-  const publishStatus = (m.status || "").toString();
+ const publishStatus = "N/A (cannot query via API)";
 
   return {
     title,
