@@ -26,9 +26,14 @@ mutation ApproveAndPublish($id: ID!) {
   metaobjectUpdate(
     id: $id,
     metaobject: {
-      status: ACTIVE
+      fields: [{ key: "status", value: "Approved" }]
     }
   ) {
+    metaobject { id handle }
+    userErrors { field message }
+  }
+  
+  metaobjectPublish(id: $id) {
     metaobject { id handle }
     userErrors { field message }
   }
@@ -37,10 +42,7 @@ mutation ApproveAndPublish($id: ID!) {
 
 const PUBLISH_ONLY = `#graphql
 mutation PublishOnly($id: ID!) {
-  metaobjectUpdate(
-    id: $id,
-    metaobject: { status: ACTIVE }
-  ) {
+  metaobjectPublish(id: $id) {
     metaobject { id handle }
     userErrors { field message }
   }
@@ -220,10 +222,10 @@ export const action = async ({ request }) => {
   const resp = await admin.graphql(mutation, { variables: { id } });
   const json = await resp.json();
 
-  const userErrors =
-    json?.data?.metaobjectUpdate?.userErrors ||
-    json?.data?.metaobjectUpdate?.userErrors ||
-    [];
+ const userErrors = [
+  ...(json?.data?.metaobjectUpdate?.userErrors || []),
+  ...(json?.data?.metaobjectPublish?.userErrors || [])
+];
 
   if (userErrors.length) {
     return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
