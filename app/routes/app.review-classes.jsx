@@ -27,10 +27,9 @@ mutation ApproveAndPublish($id: ID!) {
     id: $id,
     metaobject: {
       status: ACTIVE
-      fields: [{ key: "status", value: "Approved" }]
     }
   ) {
-    metaobject { id handle status }
+    metaobject { id handle }
     userErrors { field message }
   }
 }
@@ -42,7 +41,7 @@ mutation PublishOnly($id: ID!) {
     id: $id,
     metaobject: { status: ACTIVE }
   ) {
-    metaobject { id handle status }
+    metaobject { id handle }
     userErrors { field message }
   }
 }
@@ -127,7 +126,7 @@ function cardDetails(m) {
   const submittedByName = getField(m.fields, "submitted_by_name");
   const submittedByEmail = getField(m.fields, "submitted_by_email");
 
-  const workflowStatus = getField(m.fields, "status");
+  const workflowStatus = "Unknown";
  const publishStatus = "N/A (cannot query via API)";
 
   return {
