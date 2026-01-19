@@ -50,6 +50,20 @@ mutation PublishOnly($id: ID!) {
 }
 `;
 
+const REJECT = `#graphql
+mutation Reject($id: ID!) {
+  metaobjectUpdate(
+    id: $id,
+    metaobject: {
+      fields: [{ key: "status", value: "Rejected" }]
+    }
+  ) {
+    metaobject { id handle }
+    userErrors { field message }
+  }
+}
+`;
+
 function getField(fields, key) {
   const f = (fields || []).find((x) => x.key === key);
   return f?.value || "";
@@ -130,7 +144,7 @@ function cardDetails(m) {
   const submittedByEmail = getField(m.fields, "submitted_by_email");
 
   const workflowStatus = "Unknown";
- const publishStatus = "N/A (cannot query via API)";
+  const publishStatus = "N/A (cannot query via API)";
 
   return {
     title,
@@ -218,12 +232,14 @@ export const action = async ({ request }) => {
   if (!id) return { ok: false, error: "Missing id." };
 
   const mutation =
-    intent === "publish" ? PUBLISH_ONLY : APPROVE_AND_PUBLISH;
+    intent === "publish" ? PUBLISH_ONLY :
+    intent === "reject" ? REJECT :
+    APPROVE_AND_PUBLISH;
 
   const resp = await admin.graphql(mutation, { variables: { id } });
   const json = await resp.json();
 
- const userErrors = json?.data?.metaobjectUpdate?.userErrors || [];
+  const userErrors = json?.data?.metaobjectUpdate?.userErrors || [];
 
   if (userErrors.length) {
     return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
@@ -232,9 +248,9 @@ export const action = async ({ request }) => {
   return {
     ok: true,
     message:
-      intent === "publish"
-        ? "Published."
-        : "Approved and published.",
+      intent === "publish" ? "Published." :
+      intent === "reject" ? "Rejected." :
+      "Approved and published.",
   };
 };
 
@@ -368,22 +384,37 @@ export default function ReviewClasses() {
                     ) : null}
                   </s-paragraph>
 
-                  <fetcher.Form method="post" action={actionUrl}>
-                    <input type="hidden" name="id" value={m.id} />
-                    <input type="hidden" name="intent" value="approve" />
+                  <s-stack direction="inline" gap="tight">
+                    <fetcher.Form method="post" action={actionUrl}>
+                      <input type="hidden" name="id" value={m.id} />
+                      <input type="hidden" name="intent" value="approve" />
+                      <input type="hidden" name="shop" value={shop || ""} />
+                      <input type="hidden" name="host" value={host || ""} />
 
-                    {/* Kept for safety / future use (not required for auth now) */}
-                    <input type="hidden" name="shop" value={shop || ""} />
-                    <input type="hidden" name="host" value={host || ""} />
+                      <s-button
+                        type="submit"
+                        variant="primary"
+                        {...(busy ? { loading: true } : {})}
+                      >
+                        Approve and publish
+                      </s-button>
+                    </fetcher.Form>
 
-                    <s-button
-                      type="submit"
-                      variant="primary"
-                      {...(busy ? { loading: true } : {})}
-                    >
-                      Approve and publish
-                    </s-button>
-                  </fetcher.Form>
+                    <fetcher.Form method="post" action={actionUrl}>
+                      <input type="hidden" name="id" value={m.id} />
+                      <input type="hidden" name="intent" value="reject" />
+                      <input type="hidden" name="shop" value={shop || ""} />
+                      <input type="hidden" name="host" value={host || ""} />
+
+                      <s-button
+                        type="submit"
+                        variant="secondary"
+                        {...(busy ? { loading: true } : {})}
+                      >
+                        Reject
+                      </s-button>
+                    </fetcher.Form>
+                  </s-stack>
                 </s-section>
               );
             })}
@@ -479,8 +510,6 @@ export default function ReviewClasses() {
                   <fetcher.Form method="post" action={actionUrl}>
                     <input type="hidden" name="id" value={m.id} />
                     <input type="hidden" name="intent" value="publish" />
-
-                    {/* Kept for safety / future use (not required for auth now) */}
                     <input type="hidden" name="shop" value={shop || ""} />
                     <input type="hidden" name="host" value={host || ""} />
 
