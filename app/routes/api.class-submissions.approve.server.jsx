@@ -1,5 +1,3 @@
-export const config = { runtime: "server" };
-
 import { json } from "react-router";
 import { authenticate } from "../shopify.server";
 

@@ -1,4 +1,6 @@
-// app/routes/api.class-submissions.single.jsx
+export const config = { runtime: "server" };
+
+// app/routes/api.class-submissions.bulk.jsx
 import { PrismaClient } from "@prisma/client";
 
 const prisma =
@@ -43,9 +45,8 @@ async function verifyTurnstileIfConfigured(turnstileToken) {
   return { ok: true };
 }
 
-// Optional: allow a GET ping without breaking anything
 export async function loader() {
-  return json({ ok: true, route: "api.class-submissions.single" });
+  return json({ ok: true, route: "api.class-submissions.bulk" });
 }
 
 export async function action({ request }) {
@@ -60,8 +61,6 @@ export async function action({ request }) {
     return json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Turnstile token can be named whatever you want on the client.
-  // Accept a couple common names.
   const turnstileToken =
     body.turnstileToken || body.turnstile || body["cf-turnstile-response"] || null;
 
@@ -70,51 +69,79 @@ export async function action({ request }) {
     return json({ ok: false, error: turnstile.error, details: turnstile.details || null }, { status: 400 });
   }
 
-  // Minimal validation (expand as you want later)
   const submittedByName = String(body.submittedByName || "").trim();
   const submittedByEmail = String(body.submittedByEmail || "").trim();
-  const classTitle = String(body.classTitle || "").trim();
 
-  if (!submittedByName || !submittedByEmail || !classTitle) {
+  // Expect rows to be an array of objects
+  const rows = Array.isArray(body.rows) ? body.rows : null;
+
+  if (!submittedByName || !submittedByEmail || !rows || rows.length === 0) {
     return json(
       {
         ok: false,
-        error: "Missing required fields: submittedByName, submittedByEmail, classTitle",
+        error: "Missing required fields: submittedByName, submittedByEmail, rows[]",
       },
       { status: 400 }
     );
   }
 
-  try {
-    const created = await prisma.classSubmission.create({
-      data: {
+  // Map rows into Prisma createMany format
+  const classCreates = rows
+    .map((r) => {
+      const classTitle = String(r.classTitle || "").trim();
+      if (!classTitle) return null;
+
+      return {
         submittedByName,
         submittedByEmail,
         classTitle,
-
-        classUrl: body.classUrl ? String(body.classUrl).trim() : null,
-        description: body.description ? String(body.description).trim() : null,
-
-        cost: String(body.cost || "Unknown").trim(),
-
-        // These must match your Prisma enums
-        format: body.format || "ONLINE",
-        locationCity: String(body.locationCity || "Unknown").trim(),
-        locationState: String(body.locationState || "Unknown").trim(),
-        startDate: body.startDate ? new Date(body.startDate) : new Date(),
-        topic: body.topic || "BEGINNER",
-
+        classUrl: r.classUrl ? String(r.classUrl).trim() : null,
+        description: r.description ? String(r.description).trim() : null,
+        cost: String(r.cost || "Unknown").trim(),
+        format: r.format || "ONLINE",
+        locationCity: String(r.locationCity || "Unknown").trim(),
+        locationState: String(r.locationState || "Unknown").trim(),
+        startDate: r.startDate ? new Date(r.startDate) : new Date(),
+        topic: r.topic || "BEGINNER",
         status: "PENDING",
-      },
-      select: { id: true, createdAt: true },
+      };
+    })
+    .filter(Boolean);
+
+  if (classCreates.length === 0) {
+    return json({ ok: false, error: "No valid rows found (classTitle required)." }, { status: 400 });
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const batch = await tx.submissionBatch.create({
+        data: {
+          submittedByName,
+          submittedByEmail,
+          status: "PENDING",
+        },
+        select: { id: true, createdAt: true },
+      });
+
+      // Attach to batch
+      const created = await tx.classSubmission.createMany({
+        data: classCreates.map((c) => ({ ...c, batchId: batch.id })),
+      });
+
+      return { batch, createdCount: created.count };
     });
 
-    return json({ ok: true, id: created.id, createdAt: created.createdAt });
+    return json({
+      ok: true,
+      batchId: result.batch.id,
+      createdAt: result.batch.createdAt,
+      createdCount: result.createdCount,
+    });
   } catch (e) {
     return json(
       {
         ok: false,
-        error: "Failed to create submission",
+        error: "Failed to create bulk submissions",
         details: String(e?.message || e),
       },
       { status: 500 }

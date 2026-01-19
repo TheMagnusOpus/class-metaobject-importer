@@ -1,5 +1,3 @@
-export const config = { runtime: "server" };
-
 // app/routes/api.class-submissions.bulk.jsx
 import { PrismaClient } from "@prisma/client";
 
