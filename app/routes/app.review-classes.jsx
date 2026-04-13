@@ -1,5 +1,5 @@
 // app/routes/app.review-classes.jsx
-import { PrismaClient } from "@prisma/client";
+import prisma from "../db.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -10,14 +10,6 @@ import {
   useRouteError,
   redirect,
 } from "react-router";
-
-const prisma =
-  globalThis.__prisma ||
-  new PrismaClient({ log: ["error"] });
-
-if (process.env.NODE_ENV !== "production") {
-  globalThis.__prisma = prisma;
-}
 
 const METAOBJECT_UPSERT = `#graphql
 mutation MetaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
@@ -198,7 +190,7 @@ export const action = async ({ request }) => {
       handle: { type: "class_submission", handle },
       metaobject: {
         fields: cleanedFields,
-        capabilities: { publishable: { status: "ACTIVE" } },
+        capabilities: { publishable: { status: ACTIVE } },
       },
     };
 
