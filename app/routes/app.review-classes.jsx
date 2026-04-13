@@ -190,7 +190,7 @@ export const action = async ({ request }) => {
       handle: { type: "class_submission", handle },
       metaobject: {
         fields: cleanedFields,
-        capabilities: { publishable: { status: ACTIVE } },
+        capabilities: { publishable: { status: "ACTIVE" } },
       },
     };
 
