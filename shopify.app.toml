@@ -2,7 +2,7 @@
 
 client_id = "84ad6635593fbd205a1e7707516bf640"
 name = "Class Metaobject Importer"
-application_url = "https://y5zhwwg5bn.us-east-2.awsapprunner.com"
+application_url = "https://squid-app-krr4m.ondigitalocean.app"
 embedded = true
 
 [build]
@@ -27,5 +27,5 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://y5zhwwg5bn.us-east-2.awsapprunner.com/auth/callback"
+  "https://squid-app-krr4m.ondigitalocean.app/auth/callback"
 ]
