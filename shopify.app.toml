@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "84ad6635593fbd205a1e7707516bf640"
+client_id = "1cdd157172ee05d5610ea8c25abda0bc"
 name = "Class Metaobject Importer"
 application_url = "https://squid-app-krr4m.ondigitalocean.app"
 embedded = true
