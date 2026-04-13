@@ -66,11 +66,26 @@ function getContextFromUrlOrReferer(request) {
 // Map Prisma enum values to human-readable strings for Shopify
 function formatEnumForShopify(value) {
   if (!value) return "";
-  return value
-    .toString()
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const map = {
+    // Format
+    IN_PERSON: "In-person",
+    ONLINE: "Online",
+    HYBRID: "Hybrid",
+    // Topics
+    BEGINNER: "Beginner",
+    TOOLING: "Tooling",
+    CARVING: "Carving",
+    DYEING: "Dyeing",
+    SADDLERY: "Saddlery",
+    WALLETS: "Wallets",
+    BAGS: "Bags",
+    BELTS: "Belts",
+    FIGURE_CARVING: "Figure Carving",
+    BUSINESSES: "Businesses",
+    ASSEMBLY: "Assembly",
+    COSTUMING: "Costuming",
+  };
+  return map[value] || value.toString().replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export const loader = async ({ request }) => {
