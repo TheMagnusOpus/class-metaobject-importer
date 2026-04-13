@@ -152,7 +152,7 @@ export default function PublicClassSubmit() {
       setStatus({
         type: "error",
         message:
-          "Turnstile site key is missing. Add TURNSTILE_SITE_KEY to your App Runner environment variables and redeploy.",
+          "Turnstile site key is missing. Add TURNSTILE_SITE_KEY to your Digital Ocean environment variables and redeploy.",
       });
       return;
     }
@@ -274,7 +274,7 @@ export default function PublicClassSubmit() {
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "grid", gap: 6 }}>
-          <label>Name</label>
+          <label>Your Name</label>
           <input value={submittedByName} onChange={(e) => setSubmittedByName(e.target.value)} />
         </div>
 
