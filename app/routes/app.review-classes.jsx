@@ -1,3 +1,5 @@
+// app/routes/app.review-classes.jsx
+import { PrismaClient } from "@prisma/client";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -9,64 +11,41 @@ import {
   redirect,
 } from "react-router";
 
-const LIST = `#graphql
-query ListClasses($first: Int!) {
-  metaobjects(type: "class_submission", first: $first) {
-    nodes {
-      id
-      handle
-      fields { key value }
-    }
-  }
-}
-`;
+const prisma =
+  globalThis.__prisma ||
+  new PrismaClient({ log: ["error"] });
 
-const APPROVE_AND_PUBLISH = `#graphql
-mutation ApproveAndPublish($id: ID!) {
-  metaobjectUpdate(
-    id: $id,
-    metaobject: {
-      fields: [{ key: "status", value: "Approved" }]
-      capabilities: { publishable: { status: ACTIVE } }
-    }
-  ) {
+if (process.env.NODE_ENV !== "production") {
+  globalThis.__prisma = prisma;
+}
+
+const METAOBJECT_UPSERT = `#graphql
+mutation MetaobjectUpsert($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
+  metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
     metaobject { id handle }
     userErrors { field message }
   }
 }
 `;
 
-const PUBLISH_ONLY = `#graphql
-mutation PublishOnly($id: ID!) {
-  metaobjectUpdate(
-    id: $id,
-    metaobject: {
-      capabilities: { publishable: { status: ACTIVE } }
-    }
-  ) {
-    metaobject { id handle }
-    userErrors { field message }
-  }
+function toRichTextJSON(text) {
+  const safe = (text ?? "").toString().trim();
+  if (!safe) return "";
+  return JSON.stringify({
+    type: "root",
+    children: [
+      { type: "paragraph", children: [{ type: "text", value: safe }] },
+    ],
+  });
 }
-`;
 
-const REJECT = `#graphql
-mutation Reject($id: ID!) {
-  metaobjectUpdate(
-    id: $id,
-    metaobject: {
-      fields: [{ key: "status", value: "Rejected" }]
-    }
-  ) {
-    metaobject { id handle }
-    userErrors { field message }
-  }
-}
-`;
-
-function getField(fields, key) {
-  const f = (fields || []).find((x) => x.key === key);
-  return f?.value || "";
+function slugify(s) {
+  return (s ?? "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
 }
 
 function getContextFromUrlOrReferer(request) {
@@ -92,78 +71,17 @@ function getContextFromUrlOrReferer(request) {
   return { shop, host };
 }
 
-function formatDateOnly(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  });
-}
-
-function stripRichTextToPlain(value) {
+// Map Prisma enum values to human-readable strings for Shopify
+function formatEnumForShopify(value) {
   if (!value) return "";
-  try {
-    const obj = JSON.parse(value);
-
-    const walk = (node) => {
-      if (!node) return "";
-      if (typeof node === "string") return node;
-      if (Array.isArray(node)) return node.map(walk).join(" ");
-      if (node.type === "text" && node.value) return node.value;
-      if (node.children) return walk(node.children);
-      return "";
-    };
-
-    return walk(obj).replace(/\s+/g, " ").trim();
-  } catch {
-    return String(value).replace(/\s+/g, " ").trim();
-  }
-}
-
-function cardDetails(m) {
-  const title = getField(m.fields, "class_title") || m.handle;
-  const instructor = getField(m.fields, "instructor_name");
-
-  const startRaw = getField(m.fields, "start_date");
-  const start = formatDateOnly(startRaw);
-
-  const format = getField(m.fields, "format");
-  const cost = getField(m.fields, "cost");
-
-  const city = getField(m.fields, "location_city");
-  const state = getField(m.fields, "location_state");
-  const location = [city, state].filter(Boolean).join(", ");
-
-  const descRaw = getField(m.fields, "class_description");
-  const description = stripRichTextToPlain(descRaw);
-
-  const submittedByName = getField(m.fields, "submitted_by_name");
-  const submittedByEmail = getField(m.fields, "submitted_by_email");
-
-  const workflowStatus = "Unknown";
-  const publishStatus = "N/A (cannot query via API)";
-
-  return {
-    title,
-    instructor,
-    start,
-    format,
-    cost,
-    location,
-    description,
-    submittedByName,
-    submittedByEmail,
-    workflowStatus,
-    publishStatus,
-  };
+  return value
+    .toString()
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export const loader = async ({ request }) => {
-  // If shop/host are missing, pull them from Referer and redirect
-  // BEFORE calling authenticate.admin (prevents {shop: null}).
   const url = new URL(request.url);
   const ctx = getContextFromUrlOrReferer(request);
 
@@ -177,31 +95,30 @@ export const loader = async ({ request }) => {
     throw redirect(url.toString());
   }
 
-  const { admin } = await authenticate.admin(request);
+  await authenticate.admin(request);
 
-  const resp = await admin.graphql(LIST, { variables: { first: 250 } });
-  const json = await resp.json();
-  const nodes = json?.data?.metaobjects?.nodes || [];
-
-  const pending = nodes.filter((m) => {
-    const s = (getField(m.fields, "status") || "").toLowerCase();
-    return s === "pending";
+  // Read pending submissions from PostgreSQL
+  const pending = await prisma.classSubmission.findMany({
+    where: { status: "PENDING" },
+    orderBy: { createdAt: "desc" },
   });
 
-  // These are the ones you already "Approved" but are still not published
-  const approvedDrafts = nodes.filter((m) => {
-    const s = (getField(m.fields, "status") || "").toLowerCase();
-    const pub = (m.status || "").toString().toUpperCase();
-    return s === "approved" && pub !== "ACTIVE";
+  // Also load recently approved for visibility
+  const recentlyApproved = await prisma.classSubmission.findMany({
+    where: { status: "APPROVED" },
+    orderBy: { updatedAt: "desc" },
+    take: 10,
   });
 
-  return { pending, approvedDrafts, shop: ctx.shop, host: ctx.host };
+  return {
+    pending,
+    recentlyApproved,
+    shop: ctx.shop,
+    host: ctx.host,
+  };
 };
 
 export const action = async ({ request }) => {
-  console.log("review-classes action hit:", request.method, request.url);
-
-  // Ensure context exists even on POST by rebuilding it from URL or Referer
   const url = new URL(request.url);
   const ctx = getContextFromUrlOrReferer(request);
 
@@ -214,7 +131,6 @@ export const action = async ({ request }) => {
     url.searchParams.set("host", ctx.host);
   }
 
-  // Authenticate using a GET request with the corrected URL (keeps shop/host present)
   const authRequest = new Request(url.toString(), {
     method: "GET",
     headers: request.headers,
@@ -223,307 +139,245 @@ export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(authRequest);
 
   const fd = await request.formData();
-  const rawId = fd.get("id");
-  const rawIntent = fd.get("intent");
+  const id = fd.get("id");
+  const intent = fd.get("intent") || "approve";
 
-  const id = typeof rawId === "string" ? rawId : "";
-  const intent = typeof rawIntent === "string" ? rawIntent : "approve";
+  if (!id) return { ok: false, error: "Missing submission id." };
 
-  if (!id) return { ok: false, error: "Missing id." };
-
-  const mutation =
-    intent === "publish" ? PUBLISH_ONLY :
-    intent === "reject" ? REJECT :
-    APPROVE_AND_PUBLISH;
-
-  const resp = await admin.graphql(mutation, { variables: { id } });
-  const json = await resp.json();
-
-  const userErrors = json?.data?.metaobjectUpdate?.userErrors || [];
-
-  if (userErrors.length) {
-    return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
+  // Handle rejection — just update DB status
+  if (intent === "reject") {
+    await prisma.classSubmission.update({
+      where: { id },
+      data: { status: "REJECTED" },
+    });
+    return { ok: true, message: "Submission rejected." };
   }
 
-  return {
-    ok: true,
-    message:
-      intent === "publish" ? "Published." :
-      intent === "reject" ? "Rejected." :
-      "Approved and published.",
-  };
+  // Handle approval — create Shopify metaobject then update DB
+  if (intent === "approve") {
+    // Fetch the submission from the database
+    const submission = await prisma.classSubmission.findUnique({
+      where: { id },
+    });
+
+    if (!submission) {
+      return { ok: false, error: "Submission not found." };
+    }
+
+    // Build a unique handle from title + id suffix
+    const handle = `${slugify(submission.classTitle)}-${id.slice(-6)}`;
+
+    const fields = [
+      { key: "external_id", value: handle },
+      { key: "class_title", value: submission.classTitle },
+      { key: "class_description", value: toRichTextJSON(submission.description) },
+      { key: "instructor_name", value: submission.submittedByName },
+      { key: "format", value: formatEnumForShopify(submission.format) },
+      { key: "location_city", value: submission.locationCity },
+      { key: "location_state", value: submission.locationState },
+      {
+        key: "start_date",
+        value: submission.startDate
+          ? new Date(submission.startDate).toISOString()
+          : "",
+      },
+      { key: "cost", value: submission.cost },
+      { key: "registration_url", value: submission.classUrl || "" },
+      { key: "topics", value: formatEnumForShopify(submission.topic) },
+      { key: "submitted_by_name", value: submission.submittedByName },
+      { key: "submitted_by_email", value: submission.submittedByEmail },
+      { key: "status", value: "Approved" },
+    ];
+
+    // Filter out empty values
+    const cleanedFields = fields.filter(
+      (f) => typeof f.value === "string" && f.value.trim().length > 0
+    );
+
+    const variables = {
+      handle: { type: "class_submission", handle },
+      metaobject: {
+        fields: cleanedFields,
+        capabilities: { publishable: { status: ACTIVE } },
+      },
+    };
+
+    const resp = await admin.graphql(METAOBJECT_UPSERT, { variables });
+    const json = await resp.json();
+
+    const userErrors = json?.data?.metaobjectUpsert?.userErrors || [];
+    if (userErrors.length) {
+      return {
+        ok: false,
+        error: `Shopify error: ${userErrors.map((e) => e.message).join("; ")}`,
+      };
+    }
+
+    // Mark as approved in the database
+    await prisma.classSubmission.update({
+      where: { id },
+      data: { status: "APPROVED" },
+    });
+
+    return { ok: true, message: "Submission approved and published to Shopify." };
+  }
+
+  return { ok: false, error: "Unknown intent." };
 };
 
 export default function ReviewClasses() {
-  const { pending, approvedDrafts, shop, host } = useLoaderData();
+  const { pending, recentlyApproved, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
   const fetcher = useFetcher();
 
   const busy = nav.state !== "idle" || fetcher.state !== "idle";
-
-  // Preserve the current query string for the action URL
   const search = typeof window !== "undefined" ? window.location.search : "";
   const actionUrl = `/app/review-classes${search}`;
 
   return (
     <s-page heading="Review submissions">
-      {actionData?.error ? (
+      {actionData?.error && (
         <s-section heading="Error">
           <s-paragraph>{actionData.error}</s-paragraph>
         </s-section>
-      ) : null}
+      )}
 
-      {actionData?.ok ? (
+      {actionData?.ok && (
         <s-section heading="Success">
           <s-paragraph>{actionData.message || "Done."}</s-paragraph>
         </s-section>
-      ) : null}
+      )}
 
-      {fetcher.data?.error ? (
+      {fetcher.data?.error && (
         <s-section heading="Error">
           <s-paragraph>{fetcher.data.error}</s-paragraph>
         </s-section>
-      ) : null}
+      )}
 
-      {fetcher.data?.ok ? (
+      {fetcher.data?.ok && (
         <s-section heading="Success">
           <s-paragraph>{fetcher.data.message || "Done."}</s-paragraph>
         </s-section>
-      ) : null}
+      )}
 
       <s-section heading={`Pending submissions (${pending.length})`}>
         {pending.length === 0 ? (
           <s-paragraph>No pending submissions yet.</s-paragraph>
         ) : (
           <s-stack direction="block" gap="base">
-            {pending.map((m) => {
-              const {
-                title,
-                instructor,
-                start,
-                format,
-                cost,
-                location,
-                description,
-                submittedByName,
-                submittedByEmail,
-                workflowStatus,
-                publishStatus,
-              } = cardDetails(m);
+            {pending.map((s) => (
+              <s-section key={s.id} heading={s.classTitle}>
+                <s-paragraph>
+                  Submitted by:{" "}
+                  <s-text emphasis="bold">
+                    {s.submittedByName} ({s.submittedByEmail})
+                  </s-text>
+                  <br />
+                  Location:{" "}
+                  <s-text emphasis="bold">
+                    {s.locationCity}, {s.locationState}
+                  </s-text>
+                  <br />
+                  Date:{" "}
+                  <s-text emphasis="bold">
+                    {s.startDate
+                      ? new Date(s.startDate).toLocaleDateString(undefined, {
+                          year: "numeric",
+                          month: "short",
+                          day: "2-digit",
+                        })
+                      : "Unknown"}
+                  </s-text>
+                  <br />
+                  Format:{" "}
+                  <s-text emphasis="bold">{s.format?.replace(/_/g, " ")}</s-text>
+                  <br />
+                  Cost: <s-text emphasis="bold">{s.cost}</s-text>
+                  <br />
+                  Topic: <s-text emphasis="bold">{s.topic?.replace(/_/g, " ")}</s-text>
+                  {s.classUrl && (
+                    <>
+                      <br />
+                      URL: <s-text emphasis="bold">{s.classUrl}</s-text>
+                    </>
+                  )}
+                  {s.description && (
+                    <>
+                      <br />
+                      Description: <s-text>{s.description}</s-text>
+                    </>
+                  )}
+                  <br />
+                  Submitted:{" "}
+                  <s-text>
+                    {new Date(s.createdAt).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "2-digit",
+                    })}
+                  </s-text>
+                </s-paragraph>
 
-              return (
-                <s-section key={m.id} heading={title}>
-                  <s-paragraph>
-                    <s-text emphasis="bold">
-                      Workflow: {workflowStatus || "Unknown"}
-                    </s-text>
-                    <br />
-                    <s-text emphasis="bold">
-                      Publish status: {publishStatus || "Unknown"}
-                    </s-text>
-                    <br />
-
-                    {!submittedByName && !submittedByEmail ? (
-                      <>
-                        <s-text emphasis="bold">
-                          Submitted by: Unknown (verify before approving)
-                        </s-text>
-                        <br />
-                      </>
-                    ) : (
-                      <>
-                        Submitted by:{" "}
-                        <s-text emphasis="bold">
-                          {submittedByName || "Unknown"}
-                          {submittedByEmail ? ` (${submittedByEmail})` : ""}
-                        </s-text>
-                        <br />
-                      </>
-                    )}
-
-                    {instructor ? (
-                      <>
-                        Instructor: <s-text emphasis="bold">{instructor}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {location ? (
-                      <>
-                        Location: <s-text emphasis="bold">{location}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {start ? (
-                      <>
-                        Date: <s-text emphasis="bold">{start}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {format ? (
-                      <>
-                        Format: <s-text emphasis="bold">{format}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {cost ? (
-                      <>
-                        Cost: <s-text emphasis="bold">{cost}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {description ? (
-                      <>
-                        Description: <s-text>{description}</s-text>
-                      </>
-                    ) : null}
-                  </s-paragraph>
-
-                  <s-stack direction="inline" gap="tight">
-                    <fetcher.Form method="post" action={actionUrl}>
-                      <input type="hidden" name="id" value={m.id} />
-                      <input type="hidden" name="intent" value="approve" />
-                      <input type="hidden" name="shop" value={shop || ""} />
-                      <input type="hidden" name="host" value={host || ""} />
-
-                      <s-button
-                        type="submit"
-                        variant="primary"
-                        {...(busy ? { loading: true } : {})}
-                      >
-                        Approve and publish
-                      </s-button>
-                    </fetcher.Form>
-
-                    <fetcher.Form method="post" action={actionUrl}>
-                      <input type="hidden" name="id" value={m.id} />
-                      <input type="hidden" name="intent" value="reject" />
-                      <input type="hidden" name="shop" value={shop || ""} />
-                      <input type="hidden" name="host" value={host || ""} />
-
-                      <s-button
-                        type="submit"
-                        variant="secondary"
-                        {...(busy ? { loading: true } : {})}
-                      >
-                        Reject
-                      </s-button>
-                    </fetcher.Form>
-                  </s-stack>
-                </s-section>
-              );
-            })}
-          </s-stack>
-        )}
-      </s-section>
-
-      <s-section heading={`Approved but not published (${approvedDrafts.length})`}>
-        {approvedDrafts.length === 0 ? (
-          <s-paragraph>No approved drafts found.</s-paragraph>
-        ) : (
-          <s-stack direction="block" gap="base">
-            {approvedDrafts.map((m) => {
-              const {
-                title,
-                instructor,
-                start,
-                format,
-                cost,
-                location,
-                description,
-                submittedByName,
-                submittedByEmail,
-                workflowStatus,
-                publishStatus,
-              } = cardDetails(m);
-
-              return (
-                <s-section key={m.id} heading={title}>
-                  <s-paragraph>
-                    <s-text emphasis="bold">
-                      Workflow: {workflowStatus || "Unknown"}
-                    </s-text>
-                    <br />
-                    <s-text emphasis="bold">
-                      Publish status: {publishStatus || "Unknown"}
-                    </s-text>
-                    <br />
-
-                    {submittedByName || submittedByEmail ? (
-                      <>
-                        Submitted by:{" "}
-                        <s-text emphasis="bold">
-                          {submittedByName || "Unknown"}
-                          {submittedByEmail ? ` (${submittedByEmail})` : ""}
-                        </s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {instructor ? (
-                      <>
-                        Instructor: <s-text emphasis="bold">{instructor}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {location ? (
-                      <>
-                        Location: <s-text emphasis="bold">{location}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {start ? (
-                      <>
-                        Date: <s-text emphasis="bold">{start}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {format ? (
-                      <>
-                        Format: <s-text emphasis="bold">{format}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {cost ? (
-                      <>
-                        Cost: <s-text emphasis="bold">{cost}</s-text>
-                        <br />
-                      </>
-                    ) : null}
-
-                    {description ? (
-                      <>
-                        Description: <s-text>{description}</s-text>
-                      </>
-                    ) : null}
-                  </s-paragraph>
-
+                <s-stack direction="inline" gap="tight">
                   <fetcher.Form method="post" action={actionUrl}>
-                    <input type="hidden" name="id" value={m.id} />
-                    <input type="hidden" name="intent" value="publish" />
+                    <input type="hidden" name="id" value={s.id} />
+                    <input type="hidden" name="intent" value="approve" />
                     <input type="hidden" name="shop" value={shop || ""} />
                     <input type="hidden" name="host" value={host || ""} />
-
                     <s-button
                       type="submit"
                       variant="primary"
                       {...(busy ? { loading: true } : {})}
                     >
-                      Publish
+                      Approve and publish
                     </s-button>
                   </fetcher.Form>
-                </s-section>
-              );
-            })}
+
+                  <fetcher.Form method="post" action={actionUrl}>
+                    <input type="hidden" name="id" value={s.id} />
+                    <input type="hidden" name="intent" value="reject" />
+                    <input type="hidden" name="shop" value={shop || ""} />
+                    <input type="hidden" name="host" value={host || ""} />
+                    <s-button
+                      type="submit"
+                      variant="secondary"
+                      {...(busy ? { loading: true } : {})}
+                    >
+                      Reject
+                    </s-button>
+                  </fetcher.Form>
+                </s-stack>
+              </s-section>
+            ))}
+          </s-stack>
+        )}
+      </s-section>
+
+      <s-section heading={`Recently approved (${recentlyApproved.length})`}>
+        {recentlyApproved.length === 0 ? (
+          <s-paragraph>No approved submissions yet.</s-paragraph>
+        ) : (
+          <s-stack direction="block" gap="base">
+            {recentlyApproved.map((s) => (
+              <s-section key={s.id} heading={s.classTitle}>
+                <s-paragraph>
+                  Submitted by:{" "}
+                  <s-text emphasis="bold">
+                    {s.submittedByName} ({s.submittedByEmail})
+                  </s-text>
+                  <br />
+                  Approved:{" "}
+                  <s-text>
+                    {new Date(s.updatedAt).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "2-digit",
+                    })}
+                  </s-text>
+                </s-paragraph>
+              </s-section>
+            ))}
           </s-stack>
         )}
       </s-section>
