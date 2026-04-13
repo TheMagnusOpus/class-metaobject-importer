@@ -1,4 +1,4 @@
-import { Outlet, useLoaderData, useRouteError, useNavigate } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useLocation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
@@ -10,23 +10,17 @@ export const loader = async ({ request }) => {
 
 export default function App() {
   const { apiKey } = useLoaderData();
-  const navigate = useNavigate();
+  const location = useLocation();
+  const search = location.search || "";
+  const withSearch = (path) => `${path}${search}`;
 
   return (
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
-        <s-nav-item
-          label="Home"
-          onClick={() => navigate("/app")}
-        />
-        <s-nav-item
-          label="Import classes"
-          onClick={() => navigate("/app/import-classes")}
-        />
-        <s-nav-item
-          label="Review submissions"
-          onClick={() => navigate("/app/review-classes")}
-        />
+        <s-link href={withSearch("/app")}>Home</s-link>
+        <s-link href={withSearch("/app/import-classes")}>Import classes</s-link>
+        <s-link href={withSearch("/app/review-classes")}>Review submissions</s-link>
+        <s-link href={withSearch("/app/additional")}>Additional page</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
