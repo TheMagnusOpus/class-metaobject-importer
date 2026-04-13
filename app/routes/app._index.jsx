@@ -1,49 +1,40 @@
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { useNavigate } from "react-router";
+import { useLoaderData } from "react-router";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
-  return null;
+  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop") || "";
+  const host = url.searchParams.get("host") || "";
+  return { shop, host };
 };
 
 export default function Index() {
-  const navigate = useNavigate();
+  const { shop, host } = useLoaderData();
+  const params = new URLSearchParams({ shop, host }).toString();
 
   return (
     <s-page heading="Class Metaobject Importer">
       <s-section heading="Bulk import and approve classes">
         <s-paragraph>
-          Use this app to upload class submissions in bulk (CSV) and approve them
-          before they appear on your storefront.
+          Use this app to upload class submissions in bulk (CSV) and approve
+          them before they appear on your storefront.
         </s-paragraph>
         <s-stack direction="inline" gap="base">
           <s-button
             variant="primary"
-            onClick={() => navigate("/app/import-classes")}
+            href={`/app/import-classes?${params}`}
           >
             Import classes
           </s-button>
           <s-button
             variant="secondary"
-            onClick={() => navigate("/app/review-classes")}
+            href={`/app/review-classes?${params}`}
           >
             Review submissions
           </s-button>
         </s-stack>
-        <s-paragraph>
-          Imported submissions default to <s-text emphasis="bold">Pending</s-text>.
-          Approve them in the review screen.
-        </s-paragraph>
-      </s-section>
-      <s-section slot="aside" heading="What this app does">
-        <s-paragraph>
-          <s-unordered-list>
-            <s-list-item>Upload CSV to create or update class metaobjects</s-list-item>
-            <s-list-item>Keep new entries Pending until approved</s-list-item>
-            <s-list-item>Approve entries to publish them to your directory</s-list-item>
-          </s-unordered-list>
-        </s-paragraph>
       </s-section>
     </s-page>
   );
