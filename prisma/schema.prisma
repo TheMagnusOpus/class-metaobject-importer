@@ -20,18 +20,20 @@ enum ClassFormat {
 }
 
 enum ClassTopic {
-  BEGINNER
   TOOLING
-  CARVING
-  DYEING
-  SADDLERY
-  WALLETS
-  BAGS
-  BELTS
-  FIGURE_CARVING
-  BUSINESSES
+  DYEING_AND_FINISHING
   ASSEMBLY
-  COSTUMING
+  SADDLERY
+  BAGS_AND_ACCESSORIES
+  SMALL_GOODS
+  BUSINESS_CLASS
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  ALL_SKILL_LEVELS
 }
 
 /**
@@ -39,19 +41,17 @@ enum ClassTopic {
  * This table stores Shopify OAuth sessions (online + offline).
  */
 model Session {
-  id            String   @id
+  id            String    @id
   shop          String
   state         String
-  isOnline      Boolean  @default(false)
+  isOnline      Boolean   @default(false)
   scope         String?
   expires       DateTime?
   accessToken   String
 
-  // Newer token-exchange / expiring offline token flow fields
   refreshToken        String?
   refreshTokenExpires DateTime?
 
-  // Online session user fields (nullable for offline sessions)
   userId        BigInt?
   firstName     String?
   lastName      String?
@@ -79,6 +79,8 @@ model ClassSubmission {
   id               String           @id @default(cuid())
   submittedByName  String
   submittedByEmail String
+  instructorName   String?
+  instructorEmail  String?
 
   classTitle       String
   classUrl         String?
@@ -89,7 +91,9 @@ model ClassSubmission {
   locationCity     String
   locationState    String
   startDate        DateTime
-  topic            ClassTopic
+  endDate          DateTime?
+  topic            ClassTopic?
+  skillLevel       SkillLevel?
 
   status           SubmissionStatus @default(PENDING)
 
