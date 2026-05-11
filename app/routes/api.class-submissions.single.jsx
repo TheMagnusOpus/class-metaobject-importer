@@ -1,15 +1,5 @@
 // app/routes/api.class-submissions.single.jsx
-import { PrismaClient } from "@prisma/client";
-
-const prisma =
-  globalThis.__prisma ||
-  new PrismaClient({
-    log: ["error"],
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalThis.__prisma = prisma;
-}
+import prisma from "../db.server";
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -43,7 +33,6 @@ async function verifyTurnstileIfConfigured(turnstileToken) {
   return { ok: true };
 }
 
-// Optional: allow a GET ping without breaking anything
 export async function loader() {
   return json({ ok: true, route: "api.class-submissions.single" });
 }
@@ -60,8 +49,6 @@ export async function action({ request }) {
     return json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Turnstile token can be named whatever you want on the client.
-  // Accept a couple common names.
   const turnstileToken =
     body.turnstileToken || body.turnstile || body["cf-turnstile-response"] || null;
 
@@ -70,16 +57,17 @@ export async function action({ request }) {
     return json({ ok: false, error: turnstile.error, details: turnstile.details || null }, { status: 400 });
   }
 
-  // Minimal validation (expand as you want later)
+  // Required fields
   const submittedByName = String(body.submittedByName || "").trim();
   const submittedByEmail = String(body.submittedByEmail || "").trim();
+  const instructorName = String(body.instructorName || "").trim();
   const classTitle = String(body.classTitle || "").trim();
 
-  if (!submittedByName || !submittedByEmail || !classTitle) {
+  if (!submittedByName || !submittedByEmail || !instructorName || !classTitle) {
     return json(
       {
         ok: false,
-        error: "Missing required fields: submittedByName, submittedByEmail, classTitle",
+        error: "Missing required fields: submittedByName, submittedByEmail, instructorName, classTitle",
       },
       { status: 400 }
     );
@@ -90,20 +78,19 @@ export async function action({ request }) {
       data: {
         submittedByName,
         submittedByEmail,
+        instructorName,
+        instructorEmail: body.instructorEmail ? String(body.instructorEmail).trim() : null,
         classTitle,
-
         classUrl: body.classUrl ? String(body.classUrl).trim() : null,
         description: body.description ? String(body.description).trim() : null,
-
         cost: String(body.cost || "Unknown").trim(),
-
-        // These must match your Prisma enums
         format: body.format || "ONLINE",
         locationCity: String(body.locationCity || "Unknown").trim(),
         locationState: String(body.locationState || "Unknown").trim(),
         startDate: body.startDate ? new Date(body.startDate) : new Date(),
-        topic: body.topic || "BEGINNER",
-
+        endDate: body.endDate ? new Date(body.endDate) : null,
+        topic: body.topic || null,
+        skillLevel: body.skillLevel || null,
         status: "PENDING",
       },
       select: { id: true, createdAt: true },
