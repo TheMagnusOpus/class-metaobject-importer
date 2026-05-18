@@ -33,6 +33,67 @@ async function verifyTurnstileIfConfigured(turnstileToken) {
   return { ok: true };
 }
 
+async function sendNotificationEmail(submission) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const toEmail = process.env.NOTIFICATION_EMAIL;
+
+  if (!apiKey || !toEmail) return;
+
+  const startDate = submission.startDate
+    ? new Date(submission.startDate).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "Not specified";
+
+  const endDate = submission.endDate
+    ? new Date(submission.endDate).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : null;
+
+  const html = `
+    <h2>New Class Submission: ${submission.classTitle}</h2>
+    <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Submitted by</td><td style="padding: 6px 12px;">${submission.submittedByName} (${submission.submittedByEmail})</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Instructor</td><td style="padding: 6px 12px;">${submission.instructorName || "Not specified"}${submission.instructorEmail ? ` (${submission.instructorEmail})` : ""}</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Format</td><td style="padding: 6px 12px;">${submission.format?.replace(/_/g, " ") || "Not specified"}</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Location</td><td style="padding: 6px 12px;">${submission.locationCity}, ${submission.locationState}</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Start date</td><td style="padding: 6px 12px;">${startDate}</td></tr>
+      ${endDate ? `<tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">End date</td><td style="padding: 6px 12px;">${endDate}</td></tr>` : ""}
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Cost</td><td style="padding: 6px 12px;">${submission.cost}</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Topic</td><td style="padding: 6px 12px;">${submission.topic?.replace(/_/g, " ") || "Not specified"}</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Skill level</td><td style="padding: 6px 12px;">${submission.skillLevel?.replace(/_/g, " ") || "Not specified"}</td></tr>
+      ${submission.classUrl ? `<tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">URL</td><td style="padding: 6px 12px;"><a href="${submission.classUrl}">${submission.classUrl}</a></td></tr>` : ""}
+      ${submission.description ? `<tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Description</td><td style="padding: 6px 12px;">${submission.description}</td></tr>` : ""}
+    </table>
+    <p style="margin-top: 24px;">
+      <a href="https://learnleathercraft.myshopify.com/admin/apps/ll-class-submissions-1/app/review-classes" style="background: #2c6fad; color: white; padding: 10px 16px; border-radius: 6px; text-decoration: none; font-weight: bold;">Review submission</a>
+    </p>
+  `;
+
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        from: "noreply@learnleathercraft.com",
+        to: [toEmail],
+        subject: `New class submission: ${submission.classTitle}`,
+        html,
+      }),
+    });
+  } catch (e) {
+    console.error("Failed to send notification email:", e);
+  }
+}
+
 export async function loader() {
   return json({ ok: true, route: "api.class-submissions.single" });
 }
@@ -57,7 +118,6 @@ export async function action({ request }) {
     return json({ ok: false, error: turnstile.error, details: turnstile.details || null }, { status: 400 });
   }
 
-  // Required fields
   const submittedByName = String(body.submittedByName || "").trim();
   const submittedByEmail = String(body.submittedByEmail || "").trim();
   const instructorName = String(body.instructorName || "").trim();
@@ -93,8 +153,10 @@ export async function action({ request }) {
         skillLevel: body.skillLevel || null,
         status: "PENDING",
       },
-      select: { id: true, createdAt: true },
     });
+
+    // Send notification email (non-blocking — won't fail the submission if email fails)
+    sendNotificationEmail(created).catch(() => {});
 
     return json({ ok: true, id: created.id, createdAt: created.createdAt });
   } catch (e) {
