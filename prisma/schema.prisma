@@ -27,6 +27,7 @@ enum ClassTopic {
   BAGS_AND_ACCESSORIES
   SMALL_GOODS
   BUSINESS_CLASS
+  OTHER
 }
 
 enum SkillLevel {
@@ -90,6 +91,7 @@ model ClassSubmission {
   format           ClassFormat
   locationCity     String
   locationState    String
+  locationCountry  String?
   startDate        DateTime
   endDate          DateTime?
   topic            ClassTopic?
