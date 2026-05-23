@@ -10,6 +10,7 @@ export async function loader() {
 }
 
 const TOPIC_OPTIONS = [
+  { value: "", label: "Select a topic (optional)" },
   { value: "TOOLING", label: "Tooling" },
   { value: "DYEING_AND_FINISHING", label: "Dyeing and finishing" },
   { value: "ASSEMBLY", label: "Assembly" },
@@ -17,13 +18,14 @@ const TOPIC_OPTIONS = [
   { value: "BAGS_AND_ACCESSORIES", label: "Bags & Accessories" },
   { value: "SMALL_GOODS", label: "Small goods" },
   { value: "BUSINESS_CLASS", label: "Business class" },
+  { value: "OTHER", label: "Other" },
 ];
 
 const SKILL_LEVEL_OPTIONS = [
+  { value: "ALL_SKILL_LEVELS", label: "All skill levels" },
   { value: "BEGINNER", label: "Beginner" },
   { value: "INTERMEDIATE", label: "Intermediate" },
   { value: "ADVANCED", label: "Advanced" },
-  { value: "ALL_SKILL_LEVELS", label: "All skill levels" },
 ];
 
 function formatMMDDYYYY(dateObj) {
@@ -37,6 +39,8 @@ function formatMMDDYYYY(dateObj) {
 export default function PublicClassSubmit() {
   const { turnstileSiteKey } = useLoaderData();
 
+  const [submitted, setSubmitted] = useState(false);
+
   const [submittedByName, setSubmittedByName] = useState("");
   const [submittedByEmail, setSubmittedByEmail] = useState("");
   const [instructorName, setInstructorName] = useState("");
@@ -48,9 +52,10 @@ export default function PublicClassSubmit() {
   const [format, setFormat] = useState("ONLINE");
   const [locationCity, setLocationCity] = useState("");
   const [locationState, setLocationState] = useState("");
+  const [locationCountry, setLocationCountry] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [topic, setTopic] = useState("TOOLING");
+  const [topic, setTopic] = useState("");
   const [skillLevel, setSkillLevel] = useState("ALL_SKILL_LEVELS");
 
   const [turnstileToken, setTurnstileToken] = useState("");
@@ -81,7 +86,6 @@ export default function PublicClassSubmit() {
       format &&
       locationCity.trim() &&
       locationState.trim() &&
-      topic &&
       skillLevel &&
       !!parsedStartDate &&
       turnstileToken
@@ -95,14 +99,13 @@ export default function PublicClassSubmit() {
     format,
     locationCity,
     locationState,
-    topic,
     skillLevel,
     parsedStartDate,
     turnstileToken,
   ]);
 
   useEffect(() => {
-    if (!turnstileSiteKey) return;
+    if (!turnstileSiteKey || submitted) return;
 
     const existing = document.querySelector('script[data-turnstile="true"]');
     if (!existing) {
@@ -135,7 +138,7 @@ export default function PublicClassSubmit() {
 
     tryRender();
     return () => { cancelled = true; };
-  }, [turnstileSiteKey]);
+  }, [turnstileSiteKey, submitted]);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -146,7 +149,7 @@ export default function PublicClassSubmit() {
     }
 
     if (!turnstileToken) {
-      setStatus({ type: "error", message: "Turnstile token is missing. If you do not see the Turnstile box, something is blocking it from loading." });
+      setStatus({ type: "error", message: "Turnstile token is missing. If you do not see the security check box, something is blocking it from loading." });
       return;
     }
 
@@ -169,9 +172,10 @@ export default function PublicClassSubmit() {
       format,
       locationCity,
       locationState,
+      locationCountry,
       startDate: parsedStartDate.toISOString(),
       endDate: parsedEndDate ? parsedEndDate.toISOString() : null,
-      topic,
+      topic: topic || null,
       skillLevel,
       turnstileToken,
       cfTurnstileResponse: turnstileToken,
@@ -192,35 +196,7 @@ export default function PublicClassSubmit() {
       return;
     }
 
-    setStatus({ type: "success", message: "Submitted. Thank you! Submissions are reviewed before appearing on the site. Please allow up to one week." });
-
-    // Reset form
-    setSubmittedByName("");
-    setSubmittedByEmail("");
-    setInstructorName("");
-    setInstructorEmail("");
-    setClassTitle("");
-    setClassUrl("");
-    setDescription("");
-    setCost("Free");
-    setFormat("ONLINE");
-    setLocationCity("");
-    setLocationState("");
-    setStartDate("");
-    setEndDate("");
-    setTopic("TOOLING");
-    setSkillLevel("ALL_SKILL_LEVELS");
-    setTurnstileToken("");
-
-    try {
-      if (window.turnstile) {
-        const container = document.getElementById("turnstile-container");
-        if (container) {
-          container.removeAttribute("data-rendered");
-          container.innerHTML = "";
-        }
-      }
-    } catch { /* ignore */ }
+    setSubmitted(true);
   }
 
   const inputStyle = {
@@ -232,15 +208,47 @@ export default function PublicClassSubmit() {
     boxSizing: "border-box",
   };
 
-  const labelStyle = {
-    fontWeight: 600,
-    fontSize: 14,
-  };
+  const labelStyle = { fontWeight: 600, fontSize: 14 };
+  const fieldStyle = { display: "grid", gap: 4 };
 
-  const fieldStyle = {
-    display: "grid",
-    gap: 4,
-  };
+  // Success state — show after submission
+  if (submitted) {
+    return (
+      <div style={{ maxWidth: 680, margin: "0 auto", padding: "32px 16px", fontFamily: "system-ui, sans-serif" }}>
+        <div style={{
+          padding: 32,
+          borderRadius: 12,
+          border: "1px solid #c2f3d0",
+          background: "#f5fff8",
+          textAlign: "center",
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+          <h2 style={{ margin: "0 0 8px" }}>Submitted! Thank you.</h2>
+          <p style={{ margin: "0 0 24px", opacity: 0.75 }}>
+            Your class has been submitted for review. Please allow up to one week before it appears on the site.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "12px 24px",
+              borderRadius: 8,
+              border: "none",
+              background: "#2c6fad",
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: 16,
+              cursor: "pointer",
+            }}
+          >
+            Submit another class
+          </button>
+        </div>
+        <div style={{ marginTop: 16, fontSize: 13, opacity: 0.6, textAlign: "center" }}>
+          Click the button above to reload the page and submit another class.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 680, margin: "0 auto", padding: "32px 16px", fontFamily: "system-ui, sans-serif" }}>
@@ -302,7 +310,7 @@ export default function PublicClassSubmit() {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div style={fieldStyle}>
-            <label style={labelStyle}>Topic <span style={{ color: "#c0392b" }}>*</span></label>
+            <label style={labelStyle}>Topic <span style={{ opacity: 0.6, fontWeight: 400 }}>(optional)</span></label>
             <select style={inputStyle} value={topic} onChange={(e) => setTopic(e.target.value)}>
               {TOPIC_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
@@ -341,9 +349,14 @@ export default function PublicClassSubmit() {
           </div>
 
           <div style={fieldStyle}>
-            <label style={labelStyle}>State <span style={{ color: "#c0392b" }}>*</span></label>
-            <input style={inputStyle} value={locationState} onChange={(e) => setLocationState(e.target.value)} placeholder="State (or NA)" />
+            <label style={labelStyle}>State / Province <span style={{ color: "#c0392b" }}>*</span></label>
+            <input style={inputStyle} value={locationState} onChange={(e) => setLocationState(e.target.value)} placeholder="e.g. TX or Ontario" />
           </div>
+        </div>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Country <span style={{ opacity: 0.6, fontWeight: 400 }}>(optional — leave blank if US)</span></label>
+          <input style={inputStyle} value={locationCountry} onChange={(e) => setLocationCountry(e.target.value)} placeholder="e.g. Canada or United Kingdom" />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -385,12 +398,12 @@ export default function PublicClassSubmit() {
           {status.type === "loading" ? "Submitting…" : "Submit class"}
         </button>
 
-        {status.type !== "idle" && (
+        {status.type === "error" && (
           <div style={{
             padding: 12,
             borderRadius: 8,
-            border: status.type === "error" ? "1px solid #f3c2c2" : "1px solid #c2f3d0",
-            background: status.type === "error" ? "#fff5f5" : "#f5fff8",
+            border: "1px solid #f3c2c2",
+            background: "#fff5f5",
           }}>
             {status.message}
           </div>
