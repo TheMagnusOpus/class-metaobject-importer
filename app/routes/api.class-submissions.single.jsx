@@ -41,19 +41,21 @@ async function sendNotificationEmail(submission) {
 
   const startDate = submission.startDate
     ? new Date(submission.startDate).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
+        year: "numeric", month: "long", day: "numeric",
       })
     : "Not specified";
 
   const endDate = submission.endDate
     ? new Date(submission.endDate).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
+        year: "numeric", month: "long", day: "numeric",
       })
     : null;
+
+  const location = [
+    submission.locationCity,
+    submission.locationState,
+    submission.locationCountry,
+  ].filter(Boolean).join(", ");
 
   const html = `
     <h2>New Class Submission: ${submission.classTitle}</h2>
@@ -61,7 +63,7 @@ async function sendNotificationEmail(submission) {
       <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Submitted by</td><td style="padding: 6px 12px;">${submission.submittedByName} (${submission.submittedByEmail})</td></tr>
       <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Instructor</td><td style="padding: 6px 12px;">${submission.instructorName || "Not specified"}${submission.instructorEmail ? ` (${submission.instructorEmail})` : ""}</td></tr>
       <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Format</td><td style="padding: 6px 12px;">${submission.format?.replace(/_/g, " ") || "Not specified"}</td></tr>
-      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Location</td><td style="padding: 6px 12px;">${submission.locationCity}, ${submission.locationState}</td></tr>
+      <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Location</td><td style="padding: 6px 12px;">${location || "Not specified"}</td></tr>
       <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Start date</td><td style="padding: 6px 12px;">${startDate}</td></tr>
       ${endDate ? `<tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">End date</td><td style="padding: 6px 12px;">${endDate}</td></tr>` : ""}
       <tr><td style="padding: 6px 12px; font-weight: bold; background: #f5f5f5;">Cost</td><td style="padding: 6px 12px;">${submission.cost}</td></tr>
@@ -125,10 +127,7 @@ export async function action({ request }) {
 
   if (!submittedByName || !submittedByEmail || !instructorName || !classTitle) {
     return json(
-      {
-        ok: false,
-        error: "Missing required fields: submittedByName, submittedByEmail, instructorName, classTitle",
-      },
+      { ok: false, error: "Missing required fields: submittedByName, submittedByEmail, instructorName, classTitle" },
       { status: 400 }
     );
   }
@@ -147,6 +146,7 @@ export async function action({ request }) {
         format: body.format || "ONLINE",
         locationCity: String(body.locationCity || "Unknown").trim(),
         locationState: String(body.locationState || "Unknown").trim(),
+        locationCountry: body.locationCountry ? String(body.locationCountry).trim() : null,
         startDate: body.startDate ? new Date(body.startDate) : new Date(),
         endDate: body.endDate ? new Date(body.endDate) : null,
         topic: body.topic || null,
@@ -155,17 +155,12 @@ export async function action({ request }) {
       },
     });
 
-    // Send notification email (non-blocking — won't fail the submission if email fails)
     sendNotificationEmail(created).catch(() => {});
 
     return json({ ok: true, id: created.id, createdAt: created.createdAt });
   } catch (e) {
     return json(
-      {
-        ok: false,
-        error: "Failed to create submission",
-        details: String(e?.message || e),
-      },
+      { ok: false, error: "Failed to create submission", details: String(e?.message || e) },
       { status: 500 }
     );
   }
