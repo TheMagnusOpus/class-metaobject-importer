@@ -63,27 +63,24 @@ function getContextFromUrlOrReferer(request) {
   return { shop, host };
 }
 
-// Map Prisma enum values to human-readable strings for Shopify
 function formatEnumForShopify(value) {
   if (!value) return "";
   const map = {
-    // Format
     IN_PERSON: "In-person",
     ONLINE: "Online",
     HYBRID: "Hybrid",
-    // Topics
-    BEGINNER: "Beginner",
     TOOLING: "Tooling",
-    CARVING: "Carving",
-    DYEING: "Dyeing",
-    SADDLERY: "Saddlery",
-    WALLETS: "Wallets",
-    BAGS: "Bags",
-    BELTS: "Belts",
-    FIGURE_CARVING: "Figure Carving",
-    BUSINESSES: "Businesses",
+    DYEING_AND_FINISHING: "Dyeing and finishing",
     ASSEMBLY: "Assembly",
-    COSTUMING: "Costuming",
+    SADDLERY: "Saddlery",
+    BAGS_AND_ACCESSORIES: "Bags & Accessories",
+    SMALL_GOODS: "Small goods",
+    BUSINESS_CLASS: "Business class",
+    OTHER: "Other",
+    BEGINNER: "Beginner",
+    INTERMEDIATE: "Intermediate",
+    ADVANCED: "Advanced",
+    ALL_SKILL_LEVELS: "All Skill Levels",
   };
   return map[value] || value.toString().replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -104,25 +101,18 @@ export const loader = async ({ request }) => {
 
   await authenticate.admin(request);
 
-  // Read pending submissions from PostgreSQL
   const pending = await prisma.classSubmission.findMany({
     where: { status: "PENDING" },
     orderBy: { createdAt: "desc" },
   });
 
-  // Also load recently approved for visibility
   const recentlyApproved = await prisma.classSubmission.findMany({
     where: { status: "APPROVED" },
     orderBy: { updatedAt: "desc" },
     take: 10,
   });
 
-  return {
-    pending,
-    recentlyApproved,
-    shop: ctx.shop,
-    host: ctx.host,
-  };
+  return { pending, recentlyApproved, shop: ctx.shop, host: ctx.host };
 };
 
 export const action = async ({ request }) => {
@@ -151,7 +141,6 @@ export const action = async ({ request }) => {
 
   if (!id) return { ok: false, error: "Missing submission id." };
 
-  // Handle rejection — just update DB status
   if (intent === "reject") {
     await prisma.classSubmission.update({
       where: { id },
@@ -160,43 +149,48 @@ export const action = async ({ request }) => {
     return { ok: true, message: "Submission rejected." };
   }
 
-  // Handle approval — create Shopify metaobject then update DB
   if (intent === "approve") {
-    // Fetch the submission from the database
-    const submission = await prisma.classSubmission.findUnique({
-      where: { id },
-    });
+    const submission = await prisma.classSubmission.findUnique({ where: { id } });
 
     if (!submission) {
       return { ok: false, error: "Submission not found." };
     }
 
-    // Build a unique handle from title + id suffix
     const handle = `${slugify(submission.classTitle)}-${id.slice(-6)}`;
+
+    const locationParts = [
+      submission.locationCity,
+      submission.locationState,
+      submission.locationCountry,
+    ].filter(Boolean);
 
     const fields = [
       { key: "external_id", value: handle },
       { key: "class_title", value: submission.classTitle },
       { key: "class_description", value: toRichTextJSON(submission.description) },
-      { key: "instructor_name", value: submission.submittedByName },
+      { key: "instructor_name", value: submission.instructorName || submission.submittedByName },
+      { key: "instructor_email", value: submission.instructorEmail || "" },
       { key: "format", value: formatEnumForShopify(submission.format) },
       { key: "location_city", value: submission.locationCity },
       { key: "location_state", value: submission.locationState },
+      { key: "location_country", value: submission.locationCountry || "" },
       {
         key: "start_date",
-        value: submission.startDate
-          ? new Date(submission.startDate).toISOString()
-          : "",
+        value: submission.startDate ? new Date(submission.startDate).toISOString() : "",
+      },
+      {
+        key: "end_date",
+        value: submission.endDate ? new Date(submission.endDate).toISOString() : "",
       },
       { key: "cost", value: submission.cost },
       { key: "registration_url", value: submission.classUrl || "" },
       { key: "topics", value: formatEnumForShopify(submission.topic) },
+      { key: "skill_level", value: formatEnumForShopify(submission.skillLevel) },
       { key: "submitted_by_name", value: submission.submittedByName },
       { key: "submitted_by_email", value: submission.submittedByEmail },
       { key: "status", value: "Approved" },
     ];
 
-    // Filter out empty values
     const cleanedFields = fields.filter(
       (f) => typeof f.value === "string" && f.value.trim().length > 0
     );
@@ -220,7 +214,6 @@ export const action = async ({ request }) => {
       };
     }
 
-    // Mark as approved in the database
     await prisma.classSubmission.update({
       where: { id },
       data: { status: "APPROVED" },
@@ -242,6 +235,8 @@ export default function ReviewClasses() {
   const search = typeof window !== "undefined" ? window.location.search : "";
   const actionUrl = `/app/review-classes${search}`;
 
+  const formatLocation = (s) => [s.locationCity, s.locationState, s.locationCountry].filter(Boolean).join(", ");
+
   return (
     <s-page heading="Review submissions">
       {actionData?.error && (
@@ -249,19 +244,16 @@ export default function ReviewClasses() {
           <s-paragraph>{actionData.error}</s-paragraph>
         </s-section>
       )}
-
       {actionData?.ok && (
         <s-section heading="Success">
           <s-paragraph>{actionData.message || "Done."}</s-paragraph>
         </s-section>
       )}
-
       {fetcher.data?.error && (
         <s-section heading="Error">
           <s-paragraph>{fetcher.data.error}</s-paragraph>
         </s-section>
       )}
-
       {fetcher.data?.ok && (
         <s-section heading="Success">
           <s-paragraph>{fetcher.data.message || "Done."}</s-paragraph>
@@ -276,54 +268,30 @@ export default function ReviewClasses() {
             {pending.map((s) => (
               <s-section key={s.id} heading={s.classTitle}>
                 <s-paragraph>
-                  Submitted by:{" "}
-                  <s-text emphasis="bold">
-                    {s.submittedByName} ({s.submittedByEmail})
-                  </s-text>
+                  Submitted by: <s-text emphasis="bold">{s.submittedByName} ({s.submittedByEmail})</s-text>
                   <br />
-                  Location:{" "}
-                  <s-text emphasis="bold">
-                    {s.locationCity}, {s.locationState}
-                  </s-text>
+                  Instructor: <s-text emphasis="bold">{s.instructorName || "Not specified"}{s.instructorEmail ? ` (${s.instructorEmail})` : ""}</s-text>
                   <br />
-                  Date:{" "}
-                  <s-text emphasis="bold">
-                    {s.startDate
-                      ? new Date(s.startDate).toLocaleDateString(undefined, {
-                          year: "numeric",
-                          month: "short",
-                          day: "2-digit",
-                        })
-                      : "Unknown"}
-                  </s-text>
+                  Location: <s-text emphasis="bold">{formatLocation(s)}</s-text>
                   <br />
-                  Format:{" "}
-                  <s-text emphasis="bold">{s.format?.replace(/_/g, " ")}</s-text>
+                  Start date: <s-text emphasis="bold">
+                    {s.startDate ? new Date(s.startDate).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" }) : "Unknown"}
+                  </s-text>
+                  {s.endDate && (
+                    <><br />End date: <s-text emphasis="bold">{new Date(s.endDate).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}</s-text></>
+                  )}
+                  <br />
+                  Format: <s-text emphasis="bold">{s.format?.replace(/_/g, " ")}</s-text>
                   <br />
                   Cost: <s-text emphasis="bold">{s.cost}</s-text>
                   <br />
-                  Topic: <s-text emphasis="bold">{s.topic?.replace(/_/g, " ")}</s-text>
-                  {s.classUrl && (
-                    <>
-                      <br />
-                      URL: <s-text emphasis="bold">{s.classUrl}</s-text>
-                    </>
-                  )}
-                  {s.description && (
-                    <>
-                      <br />
-                      Description: <s-text>{s.description}</s-text>
-                    </>
-                  )}
+                  Topic: <s-text emphasis="bold">{s.topic?.replace(/_/g, " ") || "Not specified"}</s-text>
                   <br />
-                  Submitted:{" "}
-                  <s-text>
-                    {new Date(s.createdAt).toLocaleDateString(undefined, {
-                      year: "numeric",
-                      month: "short",
-                      day: "2-digit",
-                    })}
-                  </s-text>
+                  Skill level: <s-text emphasis="bold">{s.skillLevel?.replace(/_/g, " ") || "Not specified"}</s-text>
+                  {s.classUrl && (<><br />URL: <s-text emphasis="bold">{s.classUrl}</s-text></>)}
+                  {s.description && (<><br />Description: <s-text>{s.description}</s-text></>)}
+                  <br />
+                  Submitted: <s-text>{new Date(s.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}</s-text>
                 </s-paragraph>
 
                 <s-stack direction="inline" gap="tight">
@@ -332,11 +300,7 @@ export default function ReviewClasses() {
                     <input type="hidden" name="intent" value="approve" />
                     <input type="hidden" name="shop" value={shop || ""} />
                     <input type="hidden" name="host" value={host || ""} />
-                    <s-button
-                      type="submit"
-                      variant="primary"
-                      {...(busy ? { loading: true } : {})}
-                    >
+                    <s-button type="submit" variant="primary" {...(busy ? { loading: true } : {})}>
                       Approve and publish
                     </s-button>
                   </fetcher.Form>
@@ -346,11 +310,7 @@ export default function ReviewClasses() {
                     <input type="hidden" name="intent" value="reject" />
                     <input type="hidden" name="shop" value={shop || ""} />
                     <input type="hidden" name="host" value={host || ""} />
-                    <s-button
-                      type="submit"
-                      variant="secondary"
-                      {...(busy ? { loading: true } : {})}
-                    >
+                    <s-button type="submit" variant="secondary" {...(busy ? { loading: true } : {})}>
                       Reject
                     </s-button>
                   </fetcher.Form>
@@ -369,19 +329,11 @@ export default function ReviewClasses() {
             {recentlyApproved.map((s) => (
               <s-section key={s.id} heading={s.classTitle}>
                 <s-paragraph>
-                  Submitted by:{" "}
-                  <s-text emphasis="bold">
-                    {s.submittedByName} ({s.submittedByEmail})
-                  </s-text>
+                  Instructor: <s-text emphasis="bold">{s.instructorName || s.submittedByName}</s-text>
                   <br />
-                  Approved:{" "}
-                  <s-text>
-                    {new Date(s.updatedAt).toLocaleDateString(undefined, {
-                      year: "numeric",
-                      month: "short",
-                      day: "2-digit",
-                    })}
-                  </s-text>
+                  Submitted by: <s-text emphasis="bold">{s.submittedByName} ({s.submittedByEmail})</s-text>
+                  <br />
+                  Approved: <s-text>{new Date(s.updatedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}</s-text>
                 </s-paragraph>
               </s-section>
             ))}
