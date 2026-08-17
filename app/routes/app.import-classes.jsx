@@ -290,6 +290,20 @@ export default function ImportClasses() {
         body: formData,
       });
 
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const text = await res.text();
+        setResult({
+          ok: false,
+          imported: 0,
+          errors: [
+            `HTTP ${res.status} ${res.statusText} — server returned ${contentType || "unknown content type"} instead of JSON.`,
+            `First 300 chars of response: ${text.slice(0, 300)}`,
+          ],
+        });
+        return;
+      }
+
       const data = await res.json();
       setResult(data);
     } catch (err) {
