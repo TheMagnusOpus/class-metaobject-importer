@@ -1,11 +1,7 @@
-import Papa from "papaparse";
-import {
-  useActionData,
-  useNavigation,
-  useRouteError,
-  redirect,
-} from "react-router";
+﻿import { useRef, useState } from "react";
+import { useRouteError, redirect } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 
 const METAOBJECT_UPSERT = `#graphql
@@ -62,17 +58,14 @@ function coerceISODateTime(v) {
   const raw = (v ?? "").toString().trim();
   if (!raw) return "";
 
-  // Keep ISO values.
   if (raw.includes("T")) return raw;
 
-  // Try MM/DD/YYYY or MM/DD/YY
   const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*$/);
   if (m) {
     const mm = m[1].padStart(2, "0");
     const dd = m[2].padStart(2, "0");
     let yyyy = m[3];
     if (yyyy.length === 2) yyyy = `20${yyyy}`;
-    // Noon local to avoid timezone surprises
     return `${yyyy}-${mm}-${dd}T12:00:00`;
   }
 
@@ -82,7 +75,6 @@ function coerceISODateTime(v) {
 function looksLikeEmail(email) {
   const e = (email ?? "").toString().trim();
   if (!e) return false;
-  // Simple, practical validation (enough for form hygiene)
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 }
 
@@ -109,8 +101,6 @@ function getContextFromUrlOrReferer(request) {
   return { shop, host };
 }
 
-// IMPORTANT: loader for GET requests.
-// Also: ensure shop/host exist BEFORE authenticate.admin (prevents {shop: null} issues).
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const ctx = getContextFromUrlOrReferer(request);
@@ -132,7 +122,6 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   console.log("import-classes action hit:", request.method, request.url);
 
-  // Ensure context exists even on POST by rebuilding it from URL or Referer
   const url = new URL(request.url);
   const ctx = getContextFromUrlOrReferer(request);
 
@@ -145,7 +134,6 @@ export const action = async ({ request }) => {
     url.searchParams.set("host", ctx.host);
   }
 
-  // Authenticate using a GET request with the corrected URL (keeps shop/host present)
   const authRequest = new Request(url.toString(), {
     method: "GET",
     headers: request.headers,
@@ -157,27 +145,28 @@ export const action = async ({ request }) => {
   const file = formData.get("csv_file");
 
   if (!file || typeof file === "string") {
-    return { ok: false, imported: 0, errors: ["Please upload a CSV file."] };
+    return Response.json({ ok: false, imported: 0, errors: ["Please upload a CSV file."] });
   }
 
   const csvText = await file.text();
 
+  const Papa = (await import("papaparse")).default;
   const parsed = Papa.parse(csvText, {
     header: true,
     skipEmptyLines: true,
   });
 
   if (parsed.errors?.length) {
-    return {
+    return Response.json({
       ok: false,
       imported: 0,
       errors: parsed.errors.map((e) => `CSV parse error: ${e.message}`),
-    };
+    });
   }
 
   const rows = Array.isArray(parsed.data) ? parsed.data : [];
   if (!rows.length) {
-    return { ok: false, imported: 0, errors: ["No rows found in CSV."] };
+    return Response.json({ ok: false, imported: 0, errors: ["No rows found in CSV."] });
   }
 
   const errors = [];
@@ -198,7 +187,6 @@ export const action = async ({ request }) => {
       continue;
     }
 
-    // Required submitter attribution
     const submittedByName = (row.submitted_by_name ?? "").toString().trim();
     const submittedByEmail = (row.submitted_by_email ?? "").toString().trim();
 
@@ -243,12 +231,8 @@ export const action = async ({ request }) => {
         value: (row.registration_url ?? "").toString().trim(),
       },
       { key: "topics", value: (row.topics ?? "").toString().trim() },
-
-      // Attribution fields
       { key: "submitted_by_name", value: submittedByName },
       { key: "submitted_by_email", value: submittedByEmail },
-
-      // Default to Pending unless explicitly set
       { key: "status", value: normalizeStatus(row.status) || "Pending" },
     ];
 
@@ -275,13 +259,46 @@ export const action = async ({ request }) => {
     imported++;
   }
 
-  return { ok: errors.length === 0, imported, errors };
+  return Response.json({ ok: errors.length === 0, imported, errors });
 };
 
 export default function ImportClasses() {
-  const data = useActionData();
-  const nav = useNavigation();
-  const busy = nav.state !== "idle";
+  const shopify = useAppBridge();
+  const fileInputRef = useRef(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const file = fileInputRef.current?.files?.[0];
+    if (!file) return;
+
+    setSubmitting(true);
+    setResult(null);
+
+    try {
+      const token = await shopify.idToken();
+
+      const formData = new FormData();
+      formData.append("csv_file", file);
+
+      const res = await fetch(window.location.pathname + window.location.search, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const data = await res.json();
+      setResult(data);
+    } catch (err) {
+      setResult({ ok: false, imported: 0, errors: [String(err?.message || err)] });
+    } finally {
+      setSubmitting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   return (
     <s-page heading="Import classes (CSV)">
@@ -298,34 +315,40 @@ export default function ImportClasses() {
           <s-text emphasis="bold">submitted_by_email</s-text>
         </s-paragraph>
 
-        <form method="post" encType="multipart/form-data">
+        <form onSubmit={handleSubmit}>
           <s-stack direction="block" gap="base">
-            <input type="file" name="csv_file" accept=".csv,text/csv" required />
+            <input
+              type="file"
+              name="csv_file"
+              accept=".csv,text/csv"
+              required
+              ref={fileInputRef}
+            />
             <s-button
               type="submit"
               variant="primary"
-              {...(busy ? { loading: true } : {})}
+              {...(submitting ? { loading: true } : {})}
             >
               Import CSV
             </s-button>
           </s-stack>
         </form>
 
-        {typeof data?.imported === "number" ? (
+        {typeof result?.imported === "number" ? (
           <s-paragraph>
             Imported or updated:{" "}
-            <s-text emphasis="bold">{data.imported}</s-text>
+            <s-text emphasis="bold">{result.imported}</s-text>
           </s-paragraph>
         ) : null}
 
-        {data?.errors?.length ? (
+        {result?.errors?.length ? (
           <s-section heading="Errors">
             <s-unordered-list>
-              {data.errors.slice(0, 20).map((e, idx) => (
+              {result.errors.slice(0, 20).map((e, idx) => (
                 <s-list-item key={idx}>{e}</s-list-item>
               ))}
             </s-unordered-list>
-            {data.errors.length > 20 ? (
+            {result.errors.length > 20 ? (
               <s-paragraph>Showing first 20 errors.</s-paragraph>
             ) : null}
           </s-section>
