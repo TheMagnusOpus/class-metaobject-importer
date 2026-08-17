@@ -282,7 +282,12 @@ export default function ImportClasses() {
       const formData = new FormData();
       formData.append("csv_file", file);
 
-      const res = await fetch(window.location.pathname + window.location.search, {
+      // IMPORTANT: the ".data" suffix tells React Router to return raw JSON
+      // from the action instead of a fully-rendered HTML page. Without it,
+      // a fetch POST to a framework route gets treated like a real page
+      // navigation and comes back as a whole document — which is exactly
+      // what was happening before.
+      const res = await fetch(window.location.pathname + ".data" + window.location.search, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
