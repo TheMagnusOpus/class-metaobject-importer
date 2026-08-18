@@ -18,6 +18,9 @@ const TOPIC_OPTIONS = [
   { value: "BAGS_AND_ACCESSORIES", label: "Bags & Accessories" },
   { value: "SMALL_GOODS", label: "Small goods" },
   { value: "BUSINESS_CLASS", label: "Business class" },
+  { value: "YOUTH", label: "Youth" },
+  { value: "BRAIDING", label: "Braiding" },
+  { value: "MAKING_PATTERNS", label: "Making patterns" },
   { value: "OTHER", label: "Other" },
 ];
 

@@ -28,6 +28,9 @@ enum ClassTopic {
   SMALL_GOODS
   BUSINESS_CLASS
   OTHER
+  YOUTH
+  BRAIDING
+  MAKING_PATTERNS
 }
 
 enum SkillLevel {
