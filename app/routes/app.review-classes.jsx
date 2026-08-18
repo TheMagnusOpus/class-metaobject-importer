@@ -85,6 +85,63 @@ function formatEnumForShopify(value) {
   return map[value] || value.toString().replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Classes that came in through the CSV importer are written directly as
+// Shopify metaobjects (bypassing the Prisma queue entirely), so this page
+// has to ask Shopify itself for anything still sitting at status "Pending" —
+// the Prisma query above never sees these.
+async function fetchPendingMetaobjects(admin) {
+  const results = [];
+  let after = null;
+
+  for (let page = 0; page < 10; page++) {
+    const resp = await admin.graphql(
+      `#graphql
+      query PendingClassMetaobjects($after: String) {
+        metaobjects(type: "class_submission", first: 50, after: $after, sortKey: "updated_at", reverse: true) {
+          edges {
+            node {
+              id
+              handle
+              fields { key value }
+            }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { variables: { after } },
+    );
+    const json = await resp.json();
+    const edges = json?.data?.metaobjects?.edges || [];
+
+    for (const edge of edges) {
+      const f = {};
+      for (const field of edge.node.fields) f[field.key] = field.value;
+      if (f.status === "Pending") {
+        results.push({
+          id: edge.node.id,
+          handle: edge.node.handle,
+          classTitle: f.class_title || "(untitled)",
+          instructorName: f.instructor_name || "",
+          locationCity: f.location_city || "",
+          locationState: f.location_state || "",
+          startDate: f.start_date || "",
+          submittedByName: f.submitted_by_name || "",
+          submittedByEmail: f.submitted_by_email || "",
+          cost: f.cost || "",
+          format: f.format || "",
+          topics: f.topics || "",
+        });
+      }
+    }
+
+    const pageInfo = json?.data?.metaobjects?.pageInfo;
+    if (!pageInfo?.hasNextPage) break;
+    after = pageInfo.endCursor;
+  }
+
+  return results;
+}
+
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const ctx = getContextFromUrlOrReferer(request);
@@ -99,7 +156,9 @@ export const loader = async ({ request }) => {
     throw redirect(url.toString());
   }
 
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
+
+  const pendingMetaobjects = await fetchPendingMetaobjects(admin);
 
   const pending = await prisma.classSubmission.findMany({
     where: { status: "PENDING" },
@@ -112,7 +171,7 @@ export const loader = async ({ request }) => {
     take: 10,
   });
 
-  return { pending, recentlyApproved, shop: ctx.shop, host: ctx.host };
+  return { pending, pendingMetaobjects, recentlyApproved, shop: ctx.shop, host: ctx.host };
 };
 
 export const action = async ({ request }) => {
@@ -222,11 +281,59 @@ export const action = async ({ request }) => {
     return { ok: true, message: "Submission approved and published to Shopify." };
   }
 
+  if (intent === "approveMetaobjects") {
+    const handlesRaw = fd.get("handles") || "";
+    const handles = handlesRaw
+      .toString()
+      .split(",")
+      .map((h) => h.trim())
+      .filter(Boolean);
+
+    if (!handles.length) {
+      return { ok: false, error: "No submissions selected to approve." };
+    }
+
+    const failures = [];
+    let succeeded = 0;
+
+    for (const handle of handles) {
+      const variables = {
+        handle: { type: "class_submission", handle },
+        metaobject: {
+          fields: [{ key: "status", value: "Approved" }],
+          capabilities: { publishable: { status: "ACTIVE" } },
+        },
+      };
+
+      const resp = await admin.graphql(METAOBJECT_UPSERT, { variables });
+      const json = await resp.json();
+      const userErrors = json?.data?.metaobjectUpsert?.userErrors || [];
+
+      if (userErrors.length) {
+        failures.push(`${handle}: ${userErrors.map((e) => e.message).join("; ")}`);
+      } else {
+        succeeded++;
+      }
+    }
+
+    if (failures.length) {
+      return {
+        ok: succeeded > 0,
+        error: `Approved ${succeeded} of ${handles.length}. Failures: ${failures.join(" | ")}`,
+      };
+    }
+
+    return {
+      ok: true,
+      message: `Approved and published ${succeeded} submission${succeeded !== 1 ? "s" : ""}.`,
+    };
+  }
+
   return { ok: false, error: "Unknown intent." };
 };
 
 export default function ReviewClasses() {
-  const { pending, recentlyApproved, shop, host } = useLoaderData();
+  const { pending, pendingMetaobjects, recentlyApproved, shop, host } = useLoaderData();
   const actionData = useActionData();
   const nav = useNavigation();
   const fetcher = useFetcher();
@@ -315,6 +422,59 @@ export default function ReviewClasses() {
                     </s-button>
                   </fetcher.Form>
                 </s-stack>
+              </s-section>
+            ))}
+          </s-stack>
+        )}
+      </s-section>
+
+      <s-section heading={`Pending from CSV import (${pendingMetaobjects.length})`}>
+        {pendingMetaobjects.length === 0 ? (
+          <s-paragraph>No pending CSV-imported classes.</s-paragraph>
+        ) : (
+          <s-stack direction="block" gap="base">
+            <fetcher.Form method="post" action={actionUrl}>
+              <input
+                type="hidden"
+                name="handles"
+                value={pendingMetaobjects.map((m) => m.handle).join(",")}
+              />
+              <input type="hidden" name="intent" value="approveMetaobjects" />
+              <input type="hidden" name="shop" value={shop || ""} />
+              <input type="hidden" name="host" value={host || ""} />
+              <s-button type="submit" variant="primary" {...(busy ? { loading: true } : {})}>
+                Approve all ({pendingMetaobjects.length})
+              </s-button>
+            </fetcher.Form>
+
+            {pendingMetaobjects.map((m) => (
+              <s-section key={m.id} heading={m.classTitle}>
+                <s-paragraph>
+                  Submitted by: <s-text emphasis="bold">{m.submittedByName} ({m.submittedByEmail})</s-text>
+                  <br />
+                  Instructor: <s-text emphasis="bold">{m.instructorName || "Not specified"}</s-text>
+                  <br />
+                  Location: <s-text emphasis="bold">{[m.locationCity, m.locationState].filter(Boolean).join(", ")}</s-text>
+                  <br />
+                  Start date: <s-text emphasis="bold">
+                    {m.startDate ? new Date(m.startDate).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" }) : "Unknown"}
+                  </s-text>
+                  <br />
+                  Format: <s-text emphasis="bold">{m.format}</s-text>
+                  <br />
+                  Cost: <s-text emphasis="bold">{m.cost}</s-text>
+                  {m.topics && (<><br />Topic: <s-text emphasis="bold">{m.topics}</s-text></>)}
+                </s-paragraph>
+
+                <fetcher.Form method="post" action={actionUrl}>
+                  <input type="hidden" name="handles" value={m.handle} />
+                  <input type="hidden" name="intent" value="approveMetaobjects" />
+                  <input type="hidden" name="shop" value={shop || ""} />
+                  <input type="hidden" name="host" value={host || ""} />
+                  <s-button type="submit" variant="primary" {...(busy ? { loading: true } : {})}>
+                    Approve and publish
+                  </s-button>
+                </fetcher.Form>
               </s-section>
             ))}
           </s-stack>
